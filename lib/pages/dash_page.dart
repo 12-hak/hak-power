@@ -55,6 +55,7 @@ class _DashPageState extends State<DashPage> {
       if (_fridgeAlarm && !_fridgeMuted) unawaited(HakSound.buzz());
     });
     _fridgeWatch = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (mounted) setState(() {});
       final s = fridge.live.status;
       final waited = DateTime.now().difference(_started) > const Duration(seconds: 10);
       final stale = fridge.lastRx != null && DateTime.now().difference(fridge.lastRx!) > const Duration(seconds: 8);
@@ -154,6 +155,7 @@ class _DashPageState extends State<DashPage> {
                   Expanded(
                     child: BaseDeviceHome(
                       live: vm.ble.live,
+                      online: vm.ble.readingsLive,
                       timeLabel: vm.timeLabel(),
                       lightLabel: vm.lightLabel(vm.ble.live),
                       onSoc: () => _openChart('SOC', '%', 'soc'),
@@ -167,6 +169,8 @@ class _DashPageState extends State<DashPage> {
                   Expanded(
                     child: BrassMonkeyFace(
                       live: fridge.live,
+                      pendingLeft: fridge.pendingLeft,
+                      pendingRight: fridge.pendingRight,
                       onLeft: () => _openChart('TEMP LEFT', '°', 'fridgeL'),
                       onRight: () => _openChart('TEMP RIGHT', '°', 'fridgeR'),
                       onNudgeLeft: (d) => unawaited(fridge.nudgeLeft(d).catchError((_) {})),

@@ -134,6 +134,9 @@ class BleTool {
   Stream<PackLive> get stream => _ctrl.stream;
   Stream<List<PackHit>> get hitsStream => _hitsCtrl.stream;
   DateTime? hushUntil;
+  DateTime? lastRx;
+  bool get readingsLive =>
+      live.status == 'live' && lastRx != null && DateTime.now().difference(lastRx!) < const Duration(seconds: 10);
 
   void hush([Duration d = const Duration(seconds: 2)]) {
     hushUntil = DateTime.now().add(d);
@@ -231,6 +234,7 @@ class BleTool {
     _conn = found.connectionState.listen((s) {
       if (s == BluetoothConnectionState.disconnected && !_manual && live.status == 'live') {
         _poll?.cancel();
+        lastRx = null;
         _emit(live.copyWith(bleOn: false, status: 'lost'));
         _scheduleResume();
       }
@@ -264,6 +268,9 @@ class BleTool {
       await send(Cmd.runtimeInfo, [0x01]);
       _poll?.cancel();
       _poll = Timer.periodic(const Duration(seconds: 2), (_) {
+        if (live.status == 'live' && lastRx != null && DateTime.now().difference(lastRx!) > const Duration(seconds: 10)) {
+          _emit(live.copyWith(bleOn: false, status: 'offline'));
+        }
         if (hushUntil != null && DateTime.now().isBefore(hushUntil!)) return;
         send(Cmd.runtimeInfo, [0x01]);
       });
@@ -292,6 +299,10 @@ class BleTool {
   }
 
   void _onBytes(List<int> value) {
+    lastRx = DateTime.now();
+    if (live.status != 'live' || !live.bleOn) {
+      _emit(live.copyWith(bleOn: true, status: 'live'));
+    }
     _buf = Uint8List.fromList([..._buf, ...value]);
     final text = utf8.decode(value, allowMalformed: true);
     final ascii = parseLittleSun(text);
@@ -352,6 +363,7 @@ class BleTool {
     _device = null;
     _tx = null;
     _rx = null;
+    lastRx = null;
     _emit(PackLive(status: 'idle'));
   }
 }

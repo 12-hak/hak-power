@@ -56,6 +56,8 @@ class FridgeTool {
   int _rightPend = 0;
   Future<void>? _leftJob;
   Future<void>? _rightJob;
+  int? pendingLeft;
+  int? pendingRight;
   final _seen = <String, BluetoothDevice>{};
   final hits = <String, FridgeHit>{};
   final _ctrl = StreamController<FridgeLive>.broadcast();
@@ -293,59 +295,88 @@ class FridgeTool {
     }
   }
 
-  Future<bool> _confirm(bool Function(FridgeLive s) ok) async {
-    if (ok(live)) return true;
-    for (var i = 0; i < 3; i++) {
-      final pending = _nextParsed();
-      if (i > 0) {
-        try {
-          await query();
-        } catch (_) {
-          return false;
-        }
+  Future<bool> _readBack(bool Function(FridgeLive s) ok) async {
+    for (var i = 0; i < 4; i++) {
+      if (i > 0) await Future<void>.delayed(Duration(milliseconds: 150 * i));
+      final pending = _nextParsed(const Duration(milliseconds: 1500));
+      try {
+        await query();
+      } catch (_) {
+        return false;
       }
       final got = await pending;
       if (got != null && ok(got)) return true;
-      if (ok(live)) return true;
     }
     return false;
   }
 
+  void _touch() => _ctrl.add(live);
+
   Future<void> setLeftTemp(int temp) async {
     if (_tx == null && _writeChar == null) return;
     final next = temp.clamp(live.minC, live.maxC).toInt();
-    if (live.leftTarget == next) return;
+    pendingLeft = next;
+    _touch();
+    if (live.leftTarget == next) {
+      pendingLeft = null;
+      _touch();
+      return;
+    }
     _setting = true;
-    BleTool.instance.hush();
+    BleTool.instance.hush(const Duration(seconds: 5));
     try {
-      await _write(fridgeFrame(fridgeSetLeft, [toU8(next)]));
-      await _confirm((s) => s.leftTarget == next);
+      for (var i = 0; i < 2; i++) {
+        await _write(fridgeFrame(fridgeSetLeft, [toU8(next)]));
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        if (await _readBack((s) => s.leftTarget == next)) return;
+      }
     } finally {
       _setting = false;
+      if (_leftPend == 0) {
+        pendingLeft = null;
+        _touch();
+      }
     }
   }
 
   Future<void> setRightTemp(int temp) async {
     if (_tx == null && _writeChar == null) return;
     final next = temp.clamp(live.minC, live.maxC).toInt();
-    if (live.rightTarget == next) return;
+    pendingRight = next;
+    _touch();
+    if (live.rightTarget == next) {
+      pendingRight = null;
+      _touch();
+      return;
+    }
     _setting = true;
-    BleTool.instance.hush();
+    BleTool.instance.hush(const Duration(seconds: 5));
     try {
-      await _write(fridgeFrame(fridgeSetRight, [toU8(next)]));
-      await _confirm((s) => s.rightTarget == next);
+      for (var i = 0; i < 2; i++) {
+        await _write(fridgeFrame(fridgeSetRight, [toU8(next)]));
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        if (await _readBack((s) => s.rightTarget == next)) return;
+      }
     } finally {
       _setting = false;
+      if (_rightPend == 0) {
+        pendingRight = null;
+        _touch();
+      }
     }
   }
 
   Future<void> nudgeLeft(int delta) {
     _leftPend += delta;
+    pendingLeft = ((live.leftTarget ?? live.leftC ?? 0) + _leftPend).clamp(live.minC, live.maxC).toInt();
+    _touch();
     return _leftJob ??= _flushLeft();
   }
 
   Future<void> nudgeRight(int delta) {
     _rightPend += delta;
+    pendingRight = ((live.rightTarget ?? live.rightC ?? 0) + _rightPend).clamp(live.minC, live.maxC).toInt();
+    _touch();
     return _rightJob ??= _flushRight();
   }
 
@@ -381,7 +412,8 @@ class FridgeTool {
     BleTool.instance.hush();
     try {
       await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(live.copyWith(eco: on))));
-      await _confirm((s) => s.eco == on);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await _readBack((s) => s.eco == on);
     } finally {
       _setting = false;
     }
@@ -393,7 +425,8 @@ class FridgeTool {
     BleTool.instance.hush();
     try {
       await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(live.copyWith(locked: on))));
-      await _confirm((s) => s.locked == on);
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      await _readBack((s) => s.locked == on);
     } finally {
       _setting = false;
     }
@@ -461,6 +494,7 @@ class FridgeTool {
         unawaited(query());
         continue;
       }
+      if (cmd != fridgeQuery) continue;
       final parsed = parseFridgeQuery(payload);
       if (parsed != null) {
         _emit(parsed);

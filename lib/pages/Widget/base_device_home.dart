@@ -16,9 +16,11 @@ class BaseDeviceHome extends StatelessWidget {
     this.onAcIn,
     this.onDcOut,
     this.onAcOut,
+    this.online = true,
   });
 
   final PackLive live;
+  final bool online;
   final String timeLabel;
   final String lightLabel;
   final VoidCallback? onSoc;
@@ -31,19 +33,19 @@ class BaseDeviceHome extends StatelessWidget {
   Widget build(BuildContext context) {
     final socKnown = live.soc != null;
     final soc = live.soc ?? 0;
-    final ring = socColor(soc);
-    return Container(
+    final ring = online ? socColor(soc) : const Color(0xFF5A656A);
+    final face = Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         color: const Color(0xFF081014),
-        border: Border.all(color: const Color(0xFF163038)),
+        border: Border.all(color: online ? const Color(0xFF163038) : const Color(0xFF2A3034)),
       ),
       child: Column(
         children: [
           Row(
             children: [
-              _pill(live.bleOn ? 'BLE' : 'PACK', live.bleOn),
+              _pill(online ? 'LIVE' : 'OFFLINE', online),
               const Spacer(),
               Text(
                 timeLabel,
@@ -144,6 +146,16 @@ class BaseDeviceHome extends StatelessWidget {
           ),
         ],
       ),
+    );
+    if (online) return face;
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(<double>[
+        0.21, 0.72, 0.07, 0, 0,
+        0.21, 0.72, 0.07, 0, 0,
+        0.21, 0.72, 0.07, 0, 0,
+        0, 0, 0, 0.62, 0,
+      ]),
+      child: face,
     );
   }
 

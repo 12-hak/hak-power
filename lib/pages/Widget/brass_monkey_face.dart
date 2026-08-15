@@ -14,6 +14,8 @@ class BrassMonkeyFace extends StatelessWidget {
     this.onRight,
     this.onNudgeLeft,
     this.onNudgeRight,
+    this.pendingLeft,
+    this.pendingRight,
   });
 
   final FridgeLive live;
@@ -21,6 +23,8 @@ class BrassMonkeyFace extends StatelessWidget {
   final VoidCallback? onRight;
   final ValueChanged<int>? onNudgeLeft;
   final ValueChanged<int>? onNudgeRight;
+  final int? pendingLeft;
+  final int? pendingRight;
 
   @override
   Widget build(BuildContext context) {
@@ -67,6 +71,7 @@ class BrassMonkeyFace extends StatelessWidget {
                     SparkBuf.of('fridgeLSet'),
                     onLeft,
                     onNudgeLeft,
+                    pendingLeft,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -80,6 +85,7 @@ class BrassMonkeyFace extends StatelessWidget {
                     SparkBuf.of('fridgeRSet'),
                     onRight,
                     onNudgeRight,
+                    pendingRight,
                   ),
                 ),
               ],
@@ -118,6 +124,7 @@ class BrassMonkeyFace extends StatelessWidget {
     List<double> set,
     VoidCallback? onTap,
     ValueChanged<int>? onNudge,
+    int? pending,
   ) {
     final known = temp != null;
     final drift = known && target != null ? (temp - target).abs() : 0;
@@ -127,7 +134,12 @@ class BrassMonkeyFace extends StatelessWidget {
             ? const Color(0xFFFFB45A)
             : Colors.white;
     final shown = known ? '${temp.toString().padLeft(3)}°$unit' : '  —°$unit';
-    final setText = target == null ? 'SET  --°' : 'SET ${target.toString().padLeft(3)}°';
+    final updating = pending != null;
+    final setText = updating
+        ? 'UPDATING ${pending.toString().padLeft(3)}°'
+        : target == null
+            ? 'SET  --°'
+            : 'SET ${target.toString().padLeft(3)}°';
     const tempStyle = TextStyle(
       fontSize: 36,
       fontWeight: FontWeight.w700,
@@ -195,13 +207,13 @@ class BrassMonkeyFace extends StatelessWidget {
                                 textAlign: TextAlign.center,
                                 maxLines: 1,
                                 overflow: TextOverflow.clip,
-                                style: const TextStyle(
-                                  color: Color(0xFF2EC7FF),
-                                  fontSize: 14,
+                                style: TextStyle(
+                                  color: updating ? const Color(0xFFFFB45A) : const Color(0xFF2EC7FF),
+                                  fontSize: updating ? 11 : 14,
                                   fontWeight: FontWeight.w700,
                                   height: 1,
                                   fontFamily: 'monospace',
-                                  fontFeatures: [FontFeature.tabularFigures()],
+                                  fontFeatures: const [FontFeature.tabularFigures()],
                                 ),
                               ),
                             ),
