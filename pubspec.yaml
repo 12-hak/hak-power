@@ -1,0 +1,23 @@
+name: s2200
+description: Hak Power — pack and fridge dash.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.6
+  flutter_blue_plus: ^1.35.5
+  http: ^1.2.2
+  shared_preferences: ^2.3.3
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
