@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'ble_tool.dart';
 import 'fridge_protocol.dart';
 
 class FridgeHit {
@@ -49,6 +50,12 @@ class FridgeTool {
   bool _manual = false;
   DateTime? lastRx;
   DateTime? _bindAt;
+  Completer<FridgeLive>? _rxWait;
+  bool _setting = false;
+  int _leftPend = 0;
+  int _rightPend = 0;
+  Future<void>? _leftJob;
+  Future<void>? _rightJob;
   final _seen = <String, BluetoothDevice>{};
   final hits = <String, FridgeHit>{};
   final _ctrl = StreamController<FridgeLive>.broadcast();
@@ -240,7 +247,7 @@ class FridgeTool {
     _emit(FridgeLive(status: 'connecting'));
     await query();
     _poll?.cancel();
-    _poll = Timer.periodic(const Duration(seconds: 2), (_) => _tick());
+    _poll = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     } catch (e) {
       _scheduleResume();
       rethrow;
@@ -250,7 +257,13 @@ class FridgeTool {
   }
 
   Future<void> _tick() async {
-    await query();
+    if (_setting) return;
+    final stale = lastRx == null || DateTime.now().difference(lastRx!) > const Duration(milliseconds: 900);
+    if (stale) {
+      try {
+        await query();
+      } catch (_) {}
+    }
     if (live.status == 'live' && lastRx != null && DateTime.now().difference(lastRx!) > const Duration(seconds: 8)) {
       _emit(live.copyWith(status: 'offline'));
       _scheduleResume();
@@ -268,46 +281,122 @@ class FridgeTool {
     await _write(fridgeFrame(fridgeQuery));
   }
 
+  Future<FridgeLive?> _nextParsed([Duration timeout = const Duration(milliseconds: 1200)]) async {
+    final c = Completer<FridgeLive>();
+    _rxWait = c;
+    try {
+      return await c.future.timeout(timeout);
+    } on TimeoutException {
+      return null;
+    } finally {
+      if (identical(_rxWait, c)) _rxWait = null;
+    }
+  }
+
+  Future<bool> _confirm(bool Function(FridgeLive s) ok) async {
+    if (ok(live)) return true;
+    for (var i = 0; i < 3; i++) {
+      final pending = _nextParsed();
+      if (i > 0) {
+        try {
+          await query();
+        } catch (_) {
+          return false;
+        }
+      }
+      final got = await pending;
+      if (got != null && ok(got)) return true;
+      if (ok(live)) return true;
+    }
+    return false;
+  }
+
   Future<void> setLeftTemp(int temp) async {
     if (_tx == null && _writeChar == null) return;
     final next = temp.clamp(live.minC, live.maxC).toInt();
-    _emit(live.copyWith(leftTarget: next));
-    await _write(fridgeFrame(fridgeSetLeft, [toU8(next)]));
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    await query();
+    if (live.leftTarget == next) return;
+    _setting = true;
+    BleTool.instance.hush();
+    try {
+      await _write(fridgeFrame(fridgeSetLeft, [toU8(next)]));
+      await _confirm((s) => s.leftTarget == next);
+    } finally {
+      _setting = false;
+    }
   }
 
   Future<void> setRightTemp(int temp) async {
     if (_tx == null && _writeChar == null) return;
     final next = temp.clamp(live.minC, live.maxC).toInt();
-    _emit(live.copyWith(rightTarget: next));
-    await _write(fridgeFrame(fridgeSetRight, [toU8(next)]));
-    await Future<void>.delayed(const Duration(milliseconds: 250));
-    await query();
+    if (live.rightTarget == next) return;
+    _setting = true;
+    BleTool.instance.hush();
+    try {
+      await _write(fridgeFrame(fridgeSetRight, [toU8(next)]));
+      await _confirm((s) => s.rightTarget == next);
+    } finally {
+      _setting = false;
+    }
   }
 
-  Future<void> nudgeLeft(int delta) async {
-    await setLeftTemp((live.leftTarget ?? live.leftC ?? 0) + delta);
+  Future<void> nudgeLeft(int delta) {
+    _leftPend += delta;
+    return _leftJob ??= _flushLeft();
   }
 
-  Future<void> nudgeRight(int delta) async {
-    await setRightTemp((live.rightTarget ?? live.rightC ?? 0) + delta);
+  Future<void> nudgeRight(int delta) {
+    _rightPend += delta;
+    return _rightJob ??= _flushRight();
+  }
+
+  Future<void> _flushLeft() async {
+    try {
+      while (_leftPend != 0) {
+        final d = _leftPend;
+        _leftPend = 0;
+        await setLeftTemp((live.leftTarget ?? live.leftC ?? 0) + d);
+      }
+    } finally {
+      _leftJob = null;
+      if (_leftPend != 0) _leftJob = _flushLeft();
+    }
+  }
+
+  Future<void> _flushRight() async {
+    try {
+      while (_rightPend != 0) {
+        final d = _rightPend;
+        _rightPend = 0;
+        await setRightTemp((live.rightTarget ?? live.rightC ?? 0) + d);
+      }
+    } finally {
+      _rightJob = null;
+      if (_rightPend != 0) _rightJob = _flushRight();
+    }
   }
 
   Future<void> setEco(bool on) async {
     if (live.status != 'live') return;
-    final next = live.copyWith(eco: on);
-    _emit(next);
-    await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(next)));
-    await query();
+    _setting = true;
+    BleTool.instance.hush();
+    try {
+      await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(live.copyWith(eco: on))));
+      await _confirm((s) => s.eco == on);
+    } finally {
+      _setting = false;
+    }
   }
 
   Future<void> setLock(bool on) async {
     if (live.status != 'live') return;
-    final next = live.copyWith(locked: on);
-    _emit(next);
-    await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(next)));
-    await query();
+    _setting = true;
+    BleTool.instance.hush();
+    try {
+      await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(live.copyWith(locked: on))));
+      await _confirm((s) => s.locked == on);
+    } finally {
+      _setting = false;
+    }
   }
 
   Future<void> disconnect() async {
@@ -373,7 +462,11 @@ class FridgeTool {
         continue;
       }
       final parsed = parseFridgeQuery(payload);
-      if (parsed != null) _emit(parsed);
+      if (parsed != null) {
+        _emit(parsed);
+        final wait = _rxWait;
+        if (wait != null && !wait.isCompleted) wait.complete(parsed);
+      }
     }
   }
 }

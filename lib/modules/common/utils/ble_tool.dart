@@ -133,6 +133,11 @@ class BleTool {
   final _hitsCtrl = StreamController<List<PackHit>>.broadcast();
   Stream<PackLive> get stream => _ctrl.stream;
   Stream<List<PackHit>> get hitsStream => _hitsCtrl.stream;
+  DateTime? hushUntil;
+
+  void hush([Duration d = const Duration(seconds: 2)]) {
+    hushUntil = DateTime.now().add(d);
+  }
 
   void _emit(PackLive next) {
     live = next;
@@ -258,7 +263,8 @@ class BleTool {
       await send(Cmd.wifiInfo, [0x01]);
       await send(Cmd.runtimeInfo, [0x01]);
       _poll?.cancel();
-      _poll = Timer.periodic(const Duration(seconds: 1), (_) {
+      _poll = Timer.periodic(const Duration(seconds: 2), (_) {
+        if (hushUntil != null && DateTime.now().isBefore(hushUntil!)) return;
         send(Cmd.runtimeInfo, [0x01]);
       });
     } catch (e) {
