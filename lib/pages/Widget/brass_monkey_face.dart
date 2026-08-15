@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ class BrassMonkeyFace extends StatelessWidget {
   const BrassMonkeyFace({
     super.key,
     required this.live,
+    this.heard,
     this.onLeft,
     this.onRight,
     this.onNudgeLeft,
@@ -19,6 +21,7 @@ class BrassMonkeyFace extends StatelessWidget {
   });
 
   final FridgeLive live;
+  final String? heard;
   final VoidCallback? onLeft;
   final VoidCallback? onRight;
   final ValueChanged<int>? onNudgeLeft;
@@ -42,6 +45,10 @@ class BrassMonkeyFace extends StatelessWidget {
           Row(
             children: [
               _pill(live.status == 'live' ? 'FRIDGE' : live.status.toUpperCase(), live.status == 'live'),
+              if (heard != null) ...[
+                const SizedBox(width: 6),
+                Text(heard!, style: const TextStyle(color: Color(0xFF4A5A60), fontSize: 10)),
+              ],
               if (live.on) ...[
                 const SizedBox(width: 6),
                 const Text(
@@ -172,7 +179,7 @@ class BrassMonkeyFace extends StatelessWidget {
                     ),
                     const Spacer(),
                     const Text(
-                      '1H',
+                      '24H',
                       style: TextStyle(color: Color(0xFF3A4A50), fontSize: 9, letterSpacing: 0.8),
                     ),
                   ],
@@ -180,7 +187,7 @@ class BrassMonkeyFace extends StatelessWidget {
               ),
               const Spacer(),
               SizedBox(
-                height: 76,
+                height: 88,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
                   child: Column(
@@ -197,10 +204,10 @@ class BrassMonkeyFace extends StatelessWidget {
                         ),
                       ),
                       SizedBox(
-                        height: 30,
+                        height: 42,
                         child: Row(
                           children: [
-                            _step('-', onNudge == null ? null : () => onNudge(-1)),
+                            _HoldStep('-', onNudge == null ? null : () => onNudge(-1)),
                             Expanded(
                               child: Text(
                                 setText,
@@ -217,7 +224,7 @@ class BrassMonkeyFace extends StatelessWidget {
                                 ),
                               ),
                             ),
-                            _step('+', onNudge == null ? null : () => onNudge(1)),
+                            _HoldStep('+', onNudge == null ? null : () => onNudge(1)),
                           ],
                         ),
                       ),
@@ -232,22 +239,56 @@ class BrassMonkeyFace extends StatelessWidget {
     );
   }
 
-  Widget _step(String label, VoidCallback? onTap) {
+}
+
+class _HoldStep extends StatefulWidget {
+  const _HoldStep(this.label, this.onTap);
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  State<_HoldStep> createState() => _HoldStepState();
+}
+
+class _HoldStepState extends State<_HoldStep> {
+  Timer? _hold;
+
+  void _start() {
+    widget.onTap?.call();
+    _hold?.cancel();
+    _hold = Timer.periodic(const Duration(milliseconds: 220), (_) => widget.onTap?.call());
+  }
+
+  void _stop() {
+    _hold?.cancel();
+    _hold = null;
+  }
+
+  @override
+  void dispose() {
+    _stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.onTap != null;
     return Material(
-      color: onTap == null ? const Color(0x22182024) : const Color(0x332EC7FF),
+      color: on ? const Color(0x332EC7FF) : const Color(0x22182024),
       borderRadius: BorderRadius.circular(8),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
+      child: GestureDetector(
+        onTapDown: on ? (_) => _start() : null,
+        onTapUp: (_) => _stop(),
+        onTapCancel: _stop,
         child: SizedBox(
-          width: 32,
-          height: 30,
+          width: 44,
+          height: 40,
           child: Center(
             child: Text(
-              label,
+              widget.label,
               style: TextStyle(
-                color: onTap == null ? const Color(0xFF3A4A50) : Colors.white,
-                fontSize: 18,
+                color: on ? Colors.white : const Color(0xFF3A4A50),
+                fontSize: 22,
                 fontWeight: FontWeight.w700,
                 height: 1,
               ),

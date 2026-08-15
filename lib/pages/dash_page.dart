@@ -29,24 +29,36 @@ class _DashPageState extends State<DashPage> {
   Timer? _fridgeWatch;
   bool _fridgeAlarm = false;
   bool _fridgeMuted = false;
+  bool _socLowBeeped = false;
+  DateTime? _driftSince;
+  StreamSubscription<void>? _campSub;
+  final camp = HakCamp.instance;
   final _started = DateTime.now();
 
   @override
   void initState() {
     super.initState();
     _bleSub = vm.ble.stream.listen((ble) {
+      EnergyDay.add(ble.acIn, ble.pvIn, ble.acOut, ble.dcOut);
       unawaited(PackHistory.push('pvIn', ble.pvIn?.toDouble()));
       unawaited(PackHistory.push('acIn', ble.acIn?.toDouble()));
       unawaited(PackHistory.push('dcOut', ble.dcOut?.toDouble()));
       unawaited(PackHistory.push('acOut', ble.acOut?.toDouble()));
       unawaited(PackHistory.push('soc', ble.soc));
+      if (ble.soc != null) {
+        if (ble.soc! <= 20 && !_socLowBeeped) {
+          _socLowBeeped = true;
+          unawaited(HakSound.tick());
+        }
+        if (ble.soc! > 22) _socLowBeeped = false;
+      }
       if (mounted) setState(() {});
     });
     _fridgeSub = fridge.stream.listen((live) {
-      unawaited(PackHistory.push('fridgeL', live.leftC?.toDouble(), sparkMax: 360, sparkGapMs: 2000));
-      unawaited(PackHistory.push('fridgeR', live.rightC?.toDouble(), sparkMax: 360, sparkGapMs: 2000));
-      unawaited(PackHistory.push('fridgeLSet', live.leftTarget?.toDouble(), sparkMax: 360, sparkGapMs: 2000));
-      unawaited(PackHistory.push('fridgeRSet', live.rightTarget?.toDouble(), sparkMax: 360, sparkGapMs: 2000));
+      unawaited(PackHistory.push('fridgeL', live.leftC?.toDouble(), sparkMax: 720, sparkGapMs: 120000));
+      unawaited(PackHistory.push('fridgeR', live.rightC?.toDouble(), sparkMax: 720, sparkGapMs: 120000));
+      unawaited(PackHistory.push('fridgeLSet', live.leftTarget?.toDouble(), sparkMax: 720, sparkGapMs: 120000));
+      unawaited(PackHistory.push('fridgeRSet', live.rightTarget?.toDouble(), sparkMax: 720, sparkGapMs: 120000));
       _onFridgeStatus(live.status);
       _onFridgeTemp(live);
       if (mounted) setState(() {});
@@ -70,10 +82,15 @@ class _DashPageState extends State<DashPage> {
       }
       if (waited && s != 'live') _armFridgeAlarm();
     });
+    _campSub = camp.stream.listen((_) {
+      if (mounted) setState(() {});
+    });
     unawaited(_boot());
   }
 
   Future<void> _boot() async {
+    await camp.load();
+    await EnergyDay.load();
     await vm.ble.loadSaved();
     await fridge.loadSaved();
     unawaited(vm.ble.connect(vm.ble.savedId ?? packMac).catchError((_) {}));
@@ -115,10 +132,18 @@ class _DashPageState extends State<DashPage> {
   }
 
   void _onFridgeTemp(FridgeLive live) {
-    if (live.status != 'live') return;
+    if (live.status != 'live') {
+      _driftSince = null;
+      return;
+    }
     bool off(int? temp, int? set) => temp != null && set != null && (temp - set).abs() >= 5;
     if (off(live.leftC, live.leftTarget) || off(live.rightC, live.rightTarget)) {
-      unawaited(HakSound.tick());
+      _driftSince ??= DateTime.now();
+      if (DateTime.now().difference(_driftSince!) >= const Duration(minutes: 3)) {
+        unawaited(HakSound.tick());
+      }
+    } else {
+      _driftSince = null;
     }
   }
 
@@ -126,6 +151,7 @@ class _DashPageState extends State<DashPage> {
   void dispose() {
     _bleSub?.cancel();
     _fridgeSub?.cancel();
+    _campSub?.cancel();
     _fridgeBuzz?.cancel();
     _fridgeWatch?.cancel();
     super.dispose();
@@ -141,7 +167,7 @@ class _DashPageState extends State<DashPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final dash = Scaffold(
       backgroundColor: const Color(0xFF05080A),
       body: SafeArea(
         child: Stack(
@@ -157,7 +183,10 @@ class _DashPageState extends State<DashPage> {
                       live: vm.ble.live,
                       online: vm.ble.readingsLive,
                       timeLabel: vm.timeLabel(),
-                      lightLabel: vm.lightLabel(vm.ble.live),
+                      lightLabel: EnergyDay.hoursLeft(vm.ble.live.remainWh, vm.ble.live.acOut, vm.ble.live.dcOut),
+                      heard: heardAgo(vm.ble.lastRx),
+                      source: EnergyDay.source(vm.ble.live.acIn, vm.ble.live.pvIn),
+                      today: '${EnergyDay.inWh.toStringAsFixed(0)} in · ${EnergyDay.outWh.toStringAsFixed(0)} out',
                       onSoc: () => _openChart('SOC', '%', 'soc'),
                       onPvIn: () => _openChart('PV / CAR IN', 'W', 'pvIn'),
                       onAcIn: () => _openChart('AC IN', 'W', 'acIn'),
@@ -169,6 +198,7 @@ class _DashPageState extends State<DashPage> {
                   Expanded(
                     child: BrassMonkeyFace(
                       live: fridge.live,
+                      heard: heardAgo(fridge.lastRx),
                       pendingLeft: fridge.pendingLeft,
                       pendingRight: fridge.pendingRight,
                       onLeft: () => _openChart('TEMP LEFT', '°', 'fridgeL'),
@@ -236,6 +266,16 @@ class _DashPageState extends State<DashPage> {
           ],
         ),
       ),
+    );
+    if (!camp.night) return dash;
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(<double>[
+        0.85, 0.05, 0.02, 0, 0,
+        0.05, 0.12, 0.02, 0, 0,
+        0.02, 0.02, 0.10, 0, 0,
+        0, 0, 0, 1, 0,
+      ]),
+      child: dash,
     );
   }
 }

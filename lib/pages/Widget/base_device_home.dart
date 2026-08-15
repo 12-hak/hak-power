@@ -11,6 +11,9 @@ class BaseDeviceHome extends StatelessWidget {
     required this.live,
     required this.timeLabel,
     required this.lightLabel,
+    this.heard,
+    this.source,
+    this.today,
     this.onSoc,
     this.onPvIn,
     this.onAcIn,
@@ -23,6 +26,9 @@ class BaseDeviceHome extends StatelessWidget {
   final bool online;
   final String timeLabel;
   final String lightLabel;
+  final String? heard;
+  final String? source;
+  final String? today;
   final VoidCallback? onSoc;
   final VoidCallback? onPvIn;
   final VoidCallback? onAcIn;
@@ -46,15 +52,19 @@ class BaseDeviceHome extends StatelessWidget {
           Row(
             children: [
               _pill(online ? 'LIVE' : 'OFFLINE', online),
+              if (heard != null) ...[
+                const SizedBox(width: 6),
+                Text(heard!, style: const TextStyle(color: Color(0xFF4A5A60), fontSize: 10)),
+              ],
+              if (source != null) ...[
+                const SizedBox(width: 6),
+                Text(source!, style: const TextStyle(color: Color(0xFF6A8088), fontSize: 10, letterSpacing: 0.6)),
+              ],
               const Spacer(),
               Text(
                 timeLabel,
                 style: const TextStyle(color: Color(0xFF6A8088), fontSize: 11, letterSpacing: 1),
               ),
-              if (lightLabel != '—') ...[
-                const SizedBox(width: 8),
-                Text(lightLabel, style: const TextStyle(color: Color(0xFF6A8088), fontSize: 11)),
-              ],
             ],
           ),
           const SizedBox(height: 8),
@@ -127,6 +137,21 @@ class BaseDeviceHome extends StatelessWidget {
                           letterSpacing: 0.4,
                         ),
                       ),
+                      if (lightLabel != '—')
+                        Text(
+                          lightLabel,
+                          style: const TextStyle(
+                            color: Color(0xFF2EC7FF),
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      if (today != null)
+                        Text(
+                          today!,
+                          style: const TextStyle(color: Color(0xFF4A5A60), fontSize: 10),
+                        ),
                       const Spacer(),
                     ],
                   ),

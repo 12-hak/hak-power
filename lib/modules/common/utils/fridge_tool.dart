@@ -36,7 +36,6 @@ class FridgeTool {
   BluetoothCharacteristic? _tx;
   BluetoothCharacteristic? _rx;
   BluetoothCharacteristic? _writeChar;
-  Future<void> _io = Future.value();
   StreamSubscription<List<int>>? _notify;
   StreamSubscription<BluetoothConnectionState>? _conn;
   StreamSubscription<List<ScanResult>>? _scanSub;
@@ -249,7 +248,7 @@ class FridgeTool {
     _emit(FridgeLive(status: 'connecting'));
     await query();
     _poll?.cancel();
-    _poll = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    _poll = Timer.periodic(const Duration(seconds: 2), (_) => _tick());
     } catch (e) {
       _scheduleResume();
       rethrow;
@@ -260,7 +259,7 @@ class FridgeTool {
 
   Future<void> _tick() async {
     if (_setting) return;
-    final stale = lastRx == null || DateTime.now().difference(lastRx!) > const Duration(milliseconds: 900);
+    final stale = lastRx == null || DateTime.now().difference(lastRx!) > const Duration(seconds: 2);
     if (stale) {
       try {
         await query();
@@ -323,7 +322,7 @@ class FridgeTool {
       return;
     }
     _setting = true;
-    BleTool.instance.hush(const Duration(seconds: 5));
+    BleRadio.instance.hush(const Duration(seconds: 5));
     try {
       for (var i = 0; i < 2; i++) {
         await _write(fridgeFrame(fridgeSetLeft, [toU8(next)]));
@@ -350,7 +349,7 @@ class FridgeTool {
       return;
     }
     _setting = true;
-    BleTool.instance.hush(const Duration(seconds: 5));
+    BleRadio.instance.hush(const Duration(seconds: 5));
     try {
       for (var i = 0; i < 2; i++) {
         await _write(fridgeFrame(fridgeSetRight, [toU8(next)]));
@@ -406,30 +405,33 @@ class FridgeTool {
     }
   }
 
-  Future<void> setEco(bool on) async {
+  Future<void> _patchOther(FridgeLive next, bool Function(FridgeLive) ok) async {
     if (live.status != 'live') return;
     _setting = true;
-    BleTool.instance.hush();
+    BleRadio.instance.hush(const Duration(seconds: 5));
     try {
-      await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(live.copyWith(eco: on))));
+      await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(next)));
       await Future<void>.delayed(const Duration(milliseconds: 120));
-      await _readBack((s) => s.eco == on);
+      await _readBack(ok);
     } finally {
       _setting = false;
     }
   }
 
-  Future<void> setLock(bool on) async {
-    if (live.status != 'live') return;
-    _setting = true;
-    BleTool.instance.hush();
-    try {
-      await _write(fridgeFrame(fridgeSetOther, buildSetOtherPayload(live.copyWith(locked: on))));
-      await Future<void>.delayed(const Duration(milliseconds: 120));
-      await _readBack((s) => s.locked == on);
-    } finally {
-      _setting = false;
-    }
+  Future<void> setEco(bool on) => _patchOther(live.copyWith(eco: on), (s) => s.eco == on);
+
+  Future<void> setLock(bool on) => _patchOther(live.copyWith(locked: on), (s) => s.locked == on);
+
+  Future<void> setPower(bool on) => _patchOther(live.copyWith(on: on), (s) => s.on == on);
+
+  Future<void> setUnit(String unit) => _patchOther(live.copyWith(unit: unit), (s) => s.unit == unit);
+
+  Future<void> setBatSaver(int level) =>
+      _patchOther(live.copyWith(batSaver: level.clamp(0, 2)), (s) => s.batSaver == level.clamp(0, 2));
+
+  Future<void> applyPreset(int left, [int? right]) async {
+    await setLeftTemp(left);
+    if (live.dual && right != null) await setRightTemp(right);
   }
 
   Future<void> disconnect() async {
@@ -448,12 +450,8 @@ class FridgeTool {
     _emit(FridgeLive());
   }
 
-  Future<void> _write(Uint8List data) async {
-    final prev = _io;
-    final done = Completer<void>();
-    _io = done.future;
-    await prev;
-    try {
+  Future<void> _write(Uint8List data) {
+    return BleRadio.instance.enqueue(() async {
       final chars = <BluetoothCharacteristic>[
         if (_writeChar != null) _writeChar!,
         if (_tx != null && _tx != _writeChar) _tx!,
@@ -471,9 +469,7 @@ class FridgeTool {
         }
       }
       throw Exception('Fridge write failed');
-    } finally {
-      done.complete();
-    }
+    });
   }
 
   void _onRx(List<int> data) {

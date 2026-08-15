@@ -9,6 +9,41 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ble_data_resolver.dart';
 
+class BleRadio {
+  BleRadio._();
+  static final instance = BleRadio._();
+  Future<void> _chain = Future.value();
+  DateTime? hushUntil;
+
+  void hush([Duration d = const Duration(seconds: 4)]) {
+    hushUntil = DateTime.now().add(d);
+  }
+
+  bool get hushed => hushUntil != null && DateTime.now().isBefore(hushUntil!);
+
+  Future<T> enqueue<T>(Future<T> Function() job) {
+    final prev = _chain;
+    final gate = Completer<void>();
+    _chain = gate.future;
+    return () async {
+      await prev;
+      try {
+        return await job();
+      } finally {
+        gate.complete();
+      }
+    }();
+  }
+}
+
+String heardAgo(DateTime? t) {
+  if (t == null) return '—';
+  final s = DateTime.now().difference(t).inSeconds;
+  if (s < 2) return 'now';
+  if (s < 60) return '${s}s';
+  return '${s ~/ 60}m';
+}
+
 class PackLive {
   PackLive({
     this.bleOn = false,
@@ -133,14 +168,10 @@ class BleTool {
   final _hitsCtrl = StreamController<List<PackHit>>.broadcast();
   Stream<PackLive> get stream => _ctrl.stream;
   Stream<List<PackHit>> get hitsStream => _hitsCtrl.stream;
-  DateTime? hushUntil;
   DateTime? lastRx;
+  bool _sending = false;
   bool get readingsLive =>
-      live.status == 'live' && lastRx != null && DateTime.now().difference(lastRx!) < const Duration(seconds: 10);
-
-  void hush([Duration d = const Duration(seconds: 2)]) {
-    hushUntil = DateTime.now().add(d);
-  }
+      live.status == 'live' && lastRx != null && DateTime.now().difference(lastRx!) < const Duration(seconds: 30);
 
   void _emit(PackLive next) {
     live = next;
@@ -267,19 +298,28 @@ class BleTool {
       await send(Cmd.wifiInfo, [0x01]);
       await send(Cmd.runtimeInfo, [0x01]);
       _poll?.cancel();
-      _poll = Timer.periodic(const Duration(seconds: 2), (_) {
-        if (live.status == 'live' && lastRx != null && DateTime.now().difference(lastRx!) > const Duration(seconds: 10)) {
-          _emit(live.copyWith(bleOn: false, status: 'offline'));
-        }
-        if (hushUntil != null && DateTime.now().isBefore(hushUntil!)) return;
-        send(Cmd.runtimeInfo, [0x01]);
-      });
+      _poll = Timer.periodic(const Duration(seconds: 3), (_) => unawaited(_pollOnce()));
     } catch (e) {
       _emit(live.copyWith(bleOn: false, status: 'lost'));
       _scheduleResume();
       rethrow;
     } finally {
       _busy = false;
+    }
+  }
+
+  Future<void> _pollOnce() async {
+    if (_sending) return;
+    if (live.status == 'live' && lastRx != null && DateTime.now().difference(lastRx!) > const Duration(seconds: 30)) {
+      _emit(live.copyWith(bleOn: false, status: 'offline'));
+    }
+    if (BleRadio.instance.hushed) return;
+    _sending = true;
+    try {
+      await BleRadio.instance.enqueue(() => send(Cmd.runtimeInfo, [0x01]));
+    } catch (_) {
+    } finally {
+      _sending = false;
     }
   }
 

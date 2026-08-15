@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,10 +31,80 @@ class SparkBuf {
   static List<double> of(String key) => data[key] ?? const [];
 }
 
+class EnergyDay {
+  static const _key = 's2200-energy-day';
+  static String? day;
+  static double inWh = 0;
+  static double outWh = 0;
+  static DateTime? _at;
+  static bool _dirty = false;
+
+  static Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    final raw = p.getString(_key);
+    if (raw == null) return;
+    try {
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      day = map['day'] as String?;
+      inWh = (map['in'] as num?)?.toDouble() ?? 0;
+      outWh = (map['out'] as num?)?.toDouble() ?? 0;
+    } catch (_) {}
+  }
+
+  static void add(int? acIn, int? pvIn, int? acOut, int? dcOut) {
+    final now = DateTime.now();
+    final stamp = '${now.year}-${now.month}-${now.day}';
+    if (day != stamp) {
+      day = stamp;
+      inWh = 0;
+      outWh = 0;
+    }
+    if (_at != null) {
+      final h = now.difference(_at!).inMilliseconds / 3600000.0;
+      if (h > 0 && h < 0.08) {
+        inWh += ((acIn ?? 0) + (pvIn ?? 0)) * h;
+        outWh += ((acOut ?? 0) + (dcOut ?? 0)) * h;
+        _dirty = true;
+      }
+    }
+    _at = now;
+  }
+
+  static Future<void> flush() async {
+    if (!_dirty) return;
+    _dirty = false;
+    final p = await SharedPreferences.getInstance();
+    await p.setString(_key, jsonEncode({'day': day, 'in': inWh, 'out': outWh}));
+  }
+
+  static String hoursLeft(int? remainWh, int? acOut, int? dcOut) {
+    final out = (acOut ?? 0) + (dcOut ?? 0);
+    if (remainWh == null || out <= 5) return '—';
+    final h = remainWh / out;
+    if (!h.isFinite || h <= 0) return '—';
+    if (h >= 100) return '99+ h';
+    if (h >= 10) return '${h.toStringAsFixed(0)} h';
+    return '${h.toStringAsFixed(1)} h';
+  }
+
+  static String source(int? acIn, int? pvIn) {
+    final ac = (acIn ?? 0) > 30;
+    final pv = (pvIn ?? 0) > 30;
+    if (ac && pv) return 'AC+PV';
+    if (ac) return 'AC';
+    if (pv) return 'PV';
+    return 'BATT';
+  }
+}
+
 class PackHistory {
   static const _key = 's2200-hist-v1';
   static const _gapMs = 15000;
   static const _keepMs = 7 * 24 * 60 * 60 * 1000;
+
+  static Map<String, List<HistPoint>>? _mem;
+  static bool _dirty = false;
+  static Timer? _flush;
 
   static Future<void> push(String series, double? value, {int sparkMax = 48, int sparkGapMs = 0}) async {
     SparkBuf.add(series, value, max: sparkMax, gapMs: sparkGapMs);
@@ -47,7 +118,11 @@ class PackHistory {
       prev.add(HistPoint(now, value));
     }
     all[series] = prev;
-    await _save(all);
+    _dirty = true;
+    _flush ??= Timer(const Duration(seconds: 15), () {
+      _flush = null;
+      unawaited(_persist());
+    });
   }
 
   static Future<List<HistPoint>> series(String key) async {
@@ -89,23 +164,31 @@ class PackHistory {
   }
 
   static Future<Map<String, List<HistPoint>>> _load() async {
+    if (_mem != null) return _mem!;
     final p = await SharedPreferences.getInstance();
     final raw = p.getString(_key);
-    if (raw == null) return {};
+    if (raw == null) {
+      _mem = {};
+      return _mem!;
+    }
     try {
       final map = jsonDecode(raw) as Map<String, dynamic>;
-      return map.map((k, v) {
+      _mem = map.map((k, v) {
         final list = (v as List).map((e) => HistPoint((e[0] as num).toInt(), (e[1] as num).toDouble())).toList();
         return MapEntry(k, list);
       });
     } catch (_) {
-      return {};
+      _mem = {};
     }
+    return _mem!;
   }
 
-  static Future<void> _save(Map<String, List<HistPoint>> all) async {
+  static Future<void> _persist() async {
+    if (!_dirty || _mem == null) return;
+    _dirty = false;
+    await EnergyDay.flush();
     final p = await SharedPreferences.getInstance();
-    final map = all.map((k, v) => MapEntry(k, v.map((e) => [e.t, e.v]).toList()));
+    final map = _mem!.map((k, v) => MapEntry(k, v.map((e) => [e.t, e.v]).toList()));
     await p.setString(_key, jsonEncode(map));
   }
 }

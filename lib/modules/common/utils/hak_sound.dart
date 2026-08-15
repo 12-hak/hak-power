@@ -1,4 +1,37 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class HakCamp {
+  HakCamp._();
+  static final instance = HakCamp._();
+  bool night = false;
+  bool keepOn = false;
+  final _ctrl = StreamController<void>.broadcast();
+  Stream<void> get stream => _ctrl.stream;
+
+  Future<void> load() async {
+    final p = await SharedPreferences.getInstance();
+    night = p.getBool('hak-night') ?? false;
+    keepOn = p.getBool('hak-keep-on') ?? false;
+    await HakSound.keepOn(keepOn);
+    _ctrl.add(null);
+  }
+
+  Future<void> setNight(bool v) async {
+    night = v;
+    await (await SharedPreferences.getInstance()).setBool('hak-night', v);
+    _ctrl.add(null);
+  }
+
+  Future<void> setKeepOn(bool v) async {
+    keepOn = v;
+    await (await SharedPreferences.getInstance()).setBool('hak-keep-on', v);
+    await HakSound.keepOn(v);
+    _ctrl.add(null);
+  }
+}
 
 class HakSound {
   static const _c = MethodChannel('hak/sound');
@@ -29,6 +62,12 @@ class HakSound {
     } catch (_) {}
     try {
       await _c.invokeMethod<void>('tick');
+    } catch (_) {}
+  }
+
+  static Future<void> keepOn(bool on) async {
+    try {
+      await _c.invokeMethod<void>('keepOn', {'on': on});
     } catch (_) {}
   }
 }

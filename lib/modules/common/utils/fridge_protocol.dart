@@ -110,6 +110,7 @@ class FridgeLive {
     bool? dual,
     String? status,
     String? error,
+    int? batSaver,
   }) {
     return FridgeLive(
       on: on ?? this.on,
@@ -125,7 +126,7 @@ class FridgeLive {
       dual: dual ?? this.dual,
       status: status ?? this.status,
       error: error,
-      batSaver: batSaver,
+      batSaver: batSaver ?? this.batSaver,
       tempMax: tempMax,
       tempMin: tempMin,
       leftRetDiff: leftRetDiff,
