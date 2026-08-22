@@ -35,6 +35,15 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _exit() async {
+    await _run(() async {
+      await FridgeTool.instance.disconnect();
+      await widget.vm.ble.disconnect();
+      await HakSound.watchFridge(on: false);
+      await HakSound.exitApp();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -167,6 +176,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
               OutlinedButton(onPressed: () => _run(widget.vm.ble.disconnect), child: const Text('Disconnect pack')),
               OutlinedButton(onPressed: () => _run(FridgeTool.instance.disconnect), child: const Text('Disconnect fridge')),
+              OutlinedButton(
+                onPressed: busy ? null : _exit,
+                child: const Text('Exit app'),
+              ),
             ],
           ),
           const SizedBox(height: 28),
@@ -174,7 +187,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const ListTile(
             contentPadding: EdgeInsets.zero,
             title: Text('Hak Power'),
-            subtitle: Text('Version 0.1.3'),
+            subtitle: Text('Version 0.1.4'),
           ),
         ],
       ),

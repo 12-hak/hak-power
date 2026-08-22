@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ble_tool.dart';
 import 'fridge_protocol.dart';
+import 'hak_sound.dart';
 
 class FridgeHit {
   FridgeHit({required this.id, required this.name, required this.rssi, required this.likely});
@@ -57,6 +58,10 @@ class FridgeTool {
   Future<void>? _rightJob;
   int? pendingLeft;
   int? pendingRight;
+  int? wantLeft;
+  int? wantRight;
+  bool leftBusy = false;
+  bool rightBusy = false;
   final _seen = <String, BluetoothDevice>{};
   final hits = <String, FridgeHit>{};
   final _ctrl = StreamController<FridgeLive>.broadcast();
@@ -147,6 +152,7 @@ class FridgeTool {
     _manual = false;
     _resume?.cancel();
     await _remember(id);
+    unawaited(HakSound.watchFridge(on: true, heard: lastRx));
     if (_busy) return;
     _busy = true;
     lastRx = null;
@@ -312,11 +318,14 @@ class FridgeTool {
   void _touch() => _ctrl.add(live);
 
   Future<void> setLeftTemp(int temp) async {
-    if (_tx == null && _writeChar == null) return;
     final next = temp.clamp(live.minC, live.maxC).toInt();
+    wantLeft = next;
     pendingLeft = next;
+    leftBusy = true;
     _touch();
+    if (_tx == null && _writeChar == null) return;
     if (live.leftTarget == next) {
+      leftBusy = false;
       pendingLeft = null;
       _touch();
       return;
@@ -327,23 +336,32 @@ class FridgeTool {
       for (var i = 0; i < 2; i++) {
         await _write(fridgeFrame(fridgeSetLeft, [toU8(next)]));
         await Future<void>.delayed(const Duration(milliseconds: 120));
-        if (await _readBack((s) => s.leftTarget == next)) return;
+        if (await _readBack((s) => s.leftTarget == next)) {
+          wantLeft = live.leftTarget ?? next;
+          return;
+        }
       }
+      wantLeft = live.leftTarget ?? wantLeft;
     } finally {
       _setting = false;
       if (_leftPend == 0) {
+        leftBusy = false;
         pendingLeft = null;
+        wantLeft = live.leftTarget ?? wantLeft;
         _touch();
       }
     }
   }
 
   Future<void> setRightTemp(int temp) async {
-    if (_tx == null && _writeChar == null) return;
     final next = temp.clamp(live.minC, live.maxC).toInt();
+    wantRight = next;
     pendingRight = next;
+    rightBusy = true;
     _touch();
+    if (_tx == null && _writeChar == null) return;
     if (live.rightTarget == next) {
+      rightBusy = false;
       pendingRight = null;
       _touch();
       return;
@@ -354,27 +372,39 @@ class FridgeTool {
       for (var i = 0; i < 2; i++) {
         await _write(fridgeFrame(fridgeSetRight, [toU8(next)]));
         await Future<void>.delayed(const Duration(milliseconds: 120));
-        if (await _readBack((s) => s.rightTarget == next)) return;
+        if (await _readBack((s) => s.rightTarget == next)) {
+          wantRight = live.rightTarget ?? next;
+          return;
+        }
       }
+      wantRight = live.rightTarget ?? wantRight;
     } finally {
       _setting = false;
       if (_rightPend == 0) {
+        rightBusy = false;
         pendingRight = null;
+        wantRight = live.rightTarget ?? wantRight;
         _touch();
       }
     }
   }
 
   Future<void> nudgeLeft(int delta) {
+    final base = wantLeft ?? pendingLeft ?? live.leftTarget ?? live.leftC ?? 0;
+    wantLeft = (base + delta).clamp(live.minC, live.maxC).toInt();
+    pendingLeft = wantLeft;
+    leftBusy = true;
     _leftPend += delta;
-    pendingLeft = ((live.leftTarget ?? live.leftC ?? 0) + _leftPend).clamp(live.minC, live.maxC).toInt();
     _touch();
     return _leftJob ??= _flushLeft();
   }
 
   Future<void> nudgeRight(int delta) {
+    final base = wantRight ?? pendingRight ?? live.rightTarget ?? live.rightC ?? 0;
+    wantRight = (base + delta).clamp(live.minC, live.maxC).toInt();
+    pendingRight = wantRight;
+    rightBusy = true;
     _rightPend += delta;
-    pendingRight = ((live.rightTarget ?? live.rightC ?? 0) + _rightPend).clamp(live.minC, live.maxC).toInt();
     _touch();
     return _rightJob ??= _flushRight();
   }
@@ -382,9 +412,8 @@ class FridgeTool {
   Future<void> _flushLeft() async {
     try {
       while (_leftPend != 0) {
-        final d = _leftPend;
         _leftPend = 0;
-        await setLeftTemp((live.leftTarget ?? live.leftC ?? 0) + d);
+        await setLeftTemp(wantLeft ?? live.leftTarget ?? live.leftC ?? 0);
       }
     } finally {
       _leftJob = null;
@@ -395,9 +424,8 @@ class FridgeTool {
   Future<void> _flushRight() async {
     try {
       while (_rightPend != 0) {
-        final d = _rightPend;
         _rightPend = 0;
-        await setRightTemp((live.rightTarget ?? live.rightC ?? 0) + d);
+        await setRightTemp(wantRight ?? live.rightTarget ?? live.rightC ?? 0);
       }
     } finally {
       _rightJob = null;
@@ -447,6 +475,13 @@ class FridgeTool {
     _rx = null;
     _writeChar = null;
     lastRx = null;
+    wantLeft = null;
+    wantRight = null;
+    leftBusy = false;
+    rightBusy = false;
+    pendingLeft = null;
+    pendingRight = null;
+    unawaited(HakSound.watchFridge(on: false));
     _emit(FridgeLive());
   }
 
@@ -474,6 +509,7 @@ class FridgeTool {
 
   void _onRx(List<int> data) {
     lastRx = DateTime.now();
+    unawaited(HakSound.fridgeHeard(lastRx));
     final n = Uint8List.fromList([..._buf, ...data]);
     final frames = extractFridgeFrames(n);
     if (frames.isEmpty) {
@@ -493,6 +529,8 @@ class FridgeTool {
       if (cmd != fridgeQuery) continue;
       final parsed = parseFridgeQuery(payload);
       if (parsed != null) {
+        if (!leftBusy) wantLeft = parsed.leftTarget ?? wantLeft;
+        if (!rightBusy) wantRight = parsed.rightTarget ?? wantRight;
         _emit(parsed);
         final wait = _rxWait;
         if (wait != null && !wait.isCompleted) wait.complete(parsed);

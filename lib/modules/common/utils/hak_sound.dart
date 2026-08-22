@@ -70,4 +70,35 @@ class HakSound {
       await _c.invokeMethod<void>('keepOn', {'on': on});
     } catch (_) {}
   }
+
+  static Future<void> watchFridge({required bool on, DateTime? heard}) async {
+    try {
+      await _c.invokeMethod<void>('watchFridge', {
+        'on': on,
+        'heard': heard?.millisecondsSinceEpoch ?? 0,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> fridgeHeard([DateTime? t]) async {
+    try {
+      await _c.invokeMethod<void>('fridgeHeard', {
+        'at': (t ?? DateTime.now()).millisecondsSinceEpoch,
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> muteFridge(bool on) async {
+    try {
+      await _c.invokeMethod<void>('muteFridge', {'on': on});
+    } catch (_) {}
+  }
+
+  static Future<void> exitApp() async {
+    try {
+      await _c.invokeMethod<void>('exitApp');
+    } catch (_) {
+      await SystemNavigator.pop();
+    }
+  }
 }

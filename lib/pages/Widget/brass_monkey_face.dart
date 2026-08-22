@@ -16,8 +16,10 @@ class BrassMonkeyFace extends StatelessWidget {
     this.onRight,
     this.onNudgeLeft,
     this.onNudgeRight,
-    this.pendingLeft,
-    this.pendingRight,
+    this.setLeft,
+    this.setRight,
+    this.updatingLeft = false,
+    this.updatingRight = false,
   });
 
   final FridgeLive live;
@@ -26,8 +28,10 @@ class BrassMonkeyFace extends StatelessWidget {
   final VoidCallback? onRight;
   final ValueChanged<int>? onNudgeLeft;
   final ValueChanged<int>? onNudgeRight;
-  final int? pendingLeft;
-  final int? pendingRight;
+  final int? setLeft;
+  final int? setRight;
+  final bool updatingLeft;
+  final bool updatingRight;
 
   @override
   Widget build(BuildContext context) {
@@ -72,13 +76,13 @@ class BrassMonkeyFace extends StatelessWidget {
                   child: _zone(
                     'TEMP LEFT',
                     live.leftC,
-                    live.leftTarget,
+                    setLeft ?? live.leftTarget,
                     live.unit,
                     SparkBuf.of('fridgeL'),
                     SparkBuf.of('fridgeLSet'),
                     onLeft,
                     onNudgeLeft,
-                    pendingLeft,
+                    updatingLeft,
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -86,13 +90,13 @@ class BrassMonkeyFace extends StatelessWidget {
                   child: _zone(
                     'TEMP RIGHT',
                     live.rightC,
-                    live.rightTarget,
+                    setRight ?? live.rightTarget,
                     live.unit,
                     SparkBuf.of('fridgeR'),
                     SparkBuf.of('fridgeRSet'),
                     onRight,
                     onNudgeRight,
-                    pendingRight,
+                    updatingRight,
                   ),
                 ),
               ],
@@ -131,7 +135,7 @@ class BrassMonkeyFace extends StatelessWidget {
     List<double> set,
     VoidCallback? onTap,
     ValueChanged<int>? onNudge,
-    int? pending,
+    bool updating,
   ) {
     final known = temp != null;
     final drift = known && target != null ? (temp - target).abs() : 0;
@@ -141,12 +145,7 @@ class BrassMonkeyFace extends StatelessWidget {
             ? const Color(0xFFFFB45A)
             : Colors.white;
     final shown = known ? '${temp.toString().padLeft(3)}°$unit' : '  —°$unit';
-    final updating = pending != null;
-    final setText = updating
-        ? 'UPDATING ${pending.toString().padLeft(3)}°'
-        : target == null
-            ? 'SET  --°'
-            : 'SET ${target.toString().padLeft(3)}°';
+    final setText = target == null ? 'SET  --°' : 'SET ${target.toString().padLeft(3)}°';
     const tempStyle = TextStyle(
       fontSize: 36,
       fontWeight: FontWeight.w700,
@@ -186,50 +185,53 @@ class BrassMonkeyFace extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              SizedBox(
-                height: 88,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-                  child: Column(
-                    children: [
-                      GestureDetector(
-                        onTap: onTap,
-                        child: SizedBox(
-                          height: 40,
-                          width: double.infinity,
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: Text(shown, style: tempStyle.copyWith(color: tempColor)),
-                          ),
-                        ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    GestureDetector(
+                      onTap: onTap,
+                      child: Text(shown, style: tempStyle.copyWith(color: tempColor)),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      setText,
+                      style: TextStyle(
+                        color: updating ? const Color(0xFFFFB45A) : const Color(0xFF2EC7FF),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        height: 1,
+                        fontFamily: 'monospace',
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
-                      SizedBox(
-                        height: 42,
-                        child: Row(
-                          children: [
-                            _HoldStep('-', onNudge == null ? null : () => onNudge(-1)),
-                            Expanded(
-                              child: Text(
-                                setText,
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.clip,
-                                style: TextStyle(
-                                  color: updating ? const Color(0xFFFFB45A) : const Color(0xFF2EC7FF),
-                                  fontSize: updating ? 11 : 14,
-                                  fontWeight: FontWeight.w700,
-                                  height: 1,
-                                  fontFamily: 'monospace',
-                                  fontFeatures: const [FontFeature.tabularFigures()],
-                                ),
-                              ),
+                    ),
+                    const SizedBox(height: 6),
+                    SizedBox(
+                      height: 42,
+                      child: Row(
+                        children: [
+                          _HoldStep('-', onNudge == null ? null : () => onNudge(-1)),
+                          Expanded(
+                            child: Center(
+                              child: updating
+                                  ? const Text(
+                                      'UPDATING',
+                                      style: TextStyle(
+                                        color: Color(0xFFFFB45A),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        letterSpacing: 0.6,
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(),
                             ),
-                            _HoldStep('+', onNudge == null ? null : () => onNudge(1)),
-                          ],
-                        ),
+                          ),
+                          _HoldStep('+', onNudge == null ? null : () => onNudge(1)),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ],

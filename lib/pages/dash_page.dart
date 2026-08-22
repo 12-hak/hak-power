@@ -59,7 +59,7 @@ class _DashPageState extends State<DashPage> {
       unawaited(PackHistory.push('fridgeR', live.rightC?.toDouble(), sparkMax: 720, sparkGapMs: 120000));
       unawaited(PackHistory.push('fridgeLSet', live.leftTarget?.toDouble(), sparkMax: 720, sparkGapMs: 120000));
       unawaited(PackHistory.push('fridgeRSet', live.rightTarget?.toDouble(), sparkMax: 720, sparkGapMs: 120000));
-      _onFridgeStatus(live.status);
+      _checkFridgeAlarm();
       _onFridgeTemp(live);
       if (mounted) setState(() {});
     });
@@ -68,19 +68,7 @@ class _DashPageState extends State<DashPage> {
     });
     _fridgeWatch = Timer.periodic(const Duration(seconds: 2), (_) {
       if (mounted) setState(() {});
-      final s = fridge.live.status;
-      final waited = DateTime.now().difference(_started) > const Duration(seconds: 10);
-      final stale = fridge.lastRx != null && DateTime.now().difference(fridge.lastRx!) > const Duration(seconds: 8);
-      if (s == 'live' && !stale) {
-        _clearFridgeAlarm();
-        return;
-      }
-      if (!fridge.wantsLink) return;
-      if (s == 'offline' || s == 'lost' || s == 'no fridge' || s == 'fail' || s == 'no gatt' || s == 'idle') {
-        _armFridgeAlarm();
-        return;
-      }
-      if (waited && s != 'live') _armFridgeAlarm();
+      _checkFridgeAlarm();
     });
     _campSub = camp.stream.listen((_) {
       if (mounted) setState(() {});
@@ -103,6 +91,7 @@ class _DashPageState extends State<DashPage> {
     if (!_fridgeAlarm && !_fridgeMuted) return;
     _fridgeAlarm = false;
     _fridgeMuted = false;
+    unawaited(HakSound.muteFridge(false));
     if (mounted) setState(() {});
   }
 
@@ -117,18 +106,18 @@ class _DashPageState extends State<DashPage> {
     if (mounted) setState(() {});
   }
 
-  void _onFridgeStatus(String status) {
-    if (status == 'live') {
+  void _checkFridgeAlarm() {
+    if (!fridge.wantsLink) {
       _clearFridgeAlarm();
       return;
     }
-    final down = status == 'no fridge' ||
-        status == 'no gatt' ||
-        status == 'lost' ||
-        status == 'fail' ||
-        status == 'idle' ||
-        status == 'offline';
-    if (down) _armFridgeAlarm();
+    final last = fridge.lastRx;
+    final unseen = DateTime.now().difference(last ?? _started);
+    if (last != null && unseen < const Duration(minutes: 5)) {
+      _clearFridgeAlarm();
+      return;
+    }
+    if (unseen >= const Duration(minutes: 5)) _armFridgeAlarm();
   }
 
   void _onFridgeTemp(FridgeLive live) {
@@ -199,8 +188,10 @@ class _DashPageState extends State<DashPage> {
                     child: BrassMonkeyFace(
                       live: fridge.live,
                       heard: heardAgo(fridge.lastRx),
-                      pendingLeft: fridge.pendingLeft,
-                      pendingRight: fridge.pendingRight,
+                      setLeft: fridge.wantLeft ?? fridge.live.leftTarget,
+                      setRight: fridge.wantRight ?? fridge.live.rightTarget,
+                      updatingLeft: fridge.leftBusy,
+                      updatingRight: fridge.rightBusy,
                       onLeft: () => _openChart('TEMP LEFT', '°', 'fridgeL'),
                       onRight: () => _openChart('TEMP RIGHT', '°', 'fridgeR'),
                       onNudgeLeft: (d) => unawaited(fridge.nudgeLeft(d).catchError((_) {})),
@@ -218,7 +209,10 @@ class _DashPageState extends State<DashPage> {
                 right: 48,
                 child: Center(
                   child: GestureDetector(
-                    onTap: () => setState(() => _fridgeMuted = !_fridgeMuted),
+                    onTap: () {
+                      setState(() => _fridgeMuted = !_fridgeMuted);
+                      unawaited(HakSound.muteFridge(_fridgeMuted));
+                    },
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
