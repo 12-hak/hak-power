@@ -151,9 +151,6 @@ class FridgeWatchService : Service() {
         if (!muted) {
             b.addAction(android.R.drawable.ic_lock_silent_mode, "Mute", mute)
         }
-        if (Build.VERSION.SDK_INT >= 26 && !alarm) {
-            b.setSilent(true)
-        }
         if (Build.VERSION.SDK_INT >= 21) {
             b.setCategory(if (alarm && !muted) Notification.CATEGORY_ALARM else Notification.CATEGORY_SERVICE)
             b.setVisibility(Notification.VISIBILITY_PUBLIC)
