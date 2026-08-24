@@ -116,9 +116,9 @@ class FridgeWatchService : Service() {
 
     private fun currentNotif(): Notification {
         return when {
-            muted -> baseNotif("FRIDGE OFFLINE — MUTED", "Alerts silenced from Hak Power", false)
+            muted -> baseNotif("FRIDGE OFFLINE — MUTED", "Silenced until Brass Monkey reconnects", false)
             alarming -> baseNotif("FRIDGE OFFLINE", "Tap to open · Mute in notification", true)
-            else -> baseNotif("Watching Brass Monkey", "0.1.4 · alarm if unseen 5 min", false)
+            else -> baseNotif("Watching Brass Monkey", "0.1.5 · alarm if unseen 10 min", false)
         }
     }
 
@@ -129,12 +129,22 @@ class FridgeWatchService : Service() {
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val mute = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, FridgeWatchService::class.java).setAction(ACTION_MUTE),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        val muteIntent = Intent(this, FridgeWatchService::class.java).setAction(ACTION_MUTE)
+        val mute = if (Build.VERSION.SDK_INT >= 26) {
+            PendingIntent.getForegroundService(
+                this,
+                1,
+                muteIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        } else {
+            PendingIntent.getService(
+                this,
+                1,
+                muteIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+            )
+        }
         val channel = if (alarm && !muted) CHANNEL_ALARM else CHANNEL_QUIET
         val b = if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(this, channel)
@@ -148,7 +158,7 @@ class FridgeWatchService : Service() {
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-        if (!muted) {
+        if (alarm && !muted) {
             b.addAction(android.R.drawable.ic_lock_silent_mode, "Mute", mute)
         }
         if (Build.VERSION.SDK_INT >= 21) {
@@ -181,7 +191,7 @@ class FridgeWatchService : Service() {
         const val ACTION_STOP = "hak.fridge.STOP"
         const val ACTION_HEARD = "hak.fridge.HEARD"
         const val EXTRA_HEARD = "heard"
-        const val STALE_MS = 5 * 60 * 1000L
+        const val STALE_MS = 10 * 60 * 1000L
         @Volatile var lastHeard = 0L
         @Volatile var watching = false
         @Volatile var muted = false
@@ -198,7 +208,6 @@ class FridgeWatchService : Service() {
 
         fun heard(ctx: Context, at: Long) {
             lastHeard = at
-            muted = false
             persist(ctx)
             if (!watching) return
             schedule(ctx)
@@ -209,7 +218,8 @@ class FridgeWatchService : Service() {
             persist(ctx)
             cancelAlarm(ctx)
             if (!watching) return
-            ctx.startService(Intent(ctx, FridgeWatchService::class.java).setAction(ACTION_MUTE))
+            val i = Intent(ctx, FridgeWatchService::class.java).setAction(ACTION_MUTE)
+            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
 
         fun unmute(ctx: Context) {
@@ -217,7 +227,8 @@ class FridgeWatchService : Service() {
             persist(ctx)
             if (!watching) return
             schedule(ctx)
-            ctx.startService(Intent(ctx, FridgeWatchService::class.java).setAction(ACTION_HEARD).putExtra(EXTRA_HEARD, lastHeard))
+            val i = Intent(ctx, FridgeWatchService::class.java).setAction(ACTION_HEARD).putExtra(EXTRA_HEARD, lastHeard)
+            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
         }
 
         fun stop(ctx: Context) {

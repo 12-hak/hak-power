@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../hak_version.dart';
 import '../modules/common/utils/fridge_tool.dart';
 import '../modules/common/utils/hak_sound.dart';
+import '../modules/common/utils/juntek_tool.dart';
 import 'ColorScreenPower/outdoor_module/view_models/outdoor_power_view_model.dart';
 import 'Widget/fridge_pick.dart';
+import 'Widget/juntek_pick.dart';
 import 'Widget/pack_pick.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -38,6 +41,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _exit() async {
     await _run(() async {
       await FridgeTool.instance.disconnect();
+      await JuntekTool.instance.disconnect();
       await widget.vm.ble.disconnect();
       await HakSound.watchFridge(on: false);
       await HakSound.exitApp();
@@ -174,8 +178,21 @@ class _SettingsPageState extends State<SettingsPage> {
                       },
                 child: const Text('Connect fridge'),
               ),
+              FilledButton(
+                onPressed: busy
+                    ? null
+                    : () async {
+                        await showDialog<bool>(
+                          context: context,
+                          builder: (_) => const JuntekPickDialog(),
+                        );
+                        if (mounted) setState(() {});
+                      },
+                child: const Text('Connect Juntek'),
+              ),
               OutlinedButton(onPressed: () => _run(widget.vm.ble.disconnect), child: const Text('Disconnect pack')),
               OutlinedButton(onPressed: () => _run(FridgeTool.instance.disconnect), child: const Text('Disconnect fridge')),
+              OutlinedButton(onPressed: () => _run(JuntekTool.instance.disconnect), child: const Text('Disconnect Juntek')),
               OutlinedButton(
                 onPressed: busy ? null : _exit,
                 child: const Text('Exit app'),
@@ -187,7 +204,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const ListTile(
             contentPadding: EdgeInsets.zero,
             title: Text('Hak Power'),
-            subtitle: Text('Version 0.1.4'),
+            subtitle: Text('Version $hakVersion ($hakBuild)'),
           ),
         ],
       ),

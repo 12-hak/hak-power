@@ -66,6 +66,7 @@ class MainActivity : FlutterActivity() {
                         if (on) FridgeWatchService.mute(this) else FridgeWatchService.unmute(this)
                         result.success(null)
                     }
+                    "fridgeMuted" -> result.success(FridgeWatchService.muted)
                     "exitApp" -> {
                         FridgeWatchService.stop(this)
                         handler.post {

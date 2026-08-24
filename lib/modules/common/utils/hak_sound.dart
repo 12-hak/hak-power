@@ -94,6 +94,14 @@ class HakSound {
     } catch (_) {}
   }
 
+  static Future<bool> fridgeMuted() async {
+    try {
+      return await _c.invokeMethod<bool>('fridgeMuted') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<void> exitApp() async {
     try {
       await _c.invokeMethod<void>('exitApp');

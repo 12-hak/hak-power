@@ -6,10 +6,12 @@ import '../modules/common/utils/ble_tool.dart';
 import '../modules/common/utils/fridge_protocol.dart';
 import '../modules/common/utils/fridge_tool.dart';
 import '../modules/common/utils/hak_sound.dart';
+import '../modules/common/utils/juntek_tool.dart';
 import '../modules/common/utils/pack_history.dart';
 import 'ColorScreenPower/outdoor_module/view_models/outdoor_power_view_model.dart';
 import 'Widget/base_device_home.dart';
 import 'Widget/brass_monkey_face.dart';
+import 'Widget/juntek_face.dart';
 import 'Widget/power_chart.dart';
 import 'settings_page.dart';
 
@@ -23,8 +25,10 @@ class DashPage extends StatefulWidget {
 class _DashPageState extends State<DashPage> {
   final vm = OutdoorPowerViewModel();
   final fridge = FridgeTool.instance;
+  final juntek = JuntekTool.instance;
   StreamSubscription<PackLive>? _bleSub;
   StreamSubscription<FridgeLive>? _fridgeSub;
+  StreamSubscription<JuntekLive>? _juntekSub;
   Timer? _fridgeBuzz;
   Timer? _fridgeWatch;
   bool _fridgeAlarm = false;
@@ -34,6 +38,7 @@ class _DashPageState extends State<DashPage> {
   StreamSubscription<void>? _campSub;
   final camp = HakCamp.instance;
   final _started = DateTime.now();
+  bool _fridgeBooted = false;
 
   @override
   void initState() {
@@ -63,12 +68,14 @@ class _DashPageState extends State<DashPage> {
       _onFridgeTemp(live);
       if (mounted) setState(() {});
     });
+    _juntekSub = juntek.stream.listen((_) {
+      if (mounted) setState(() {});
+    });
     _fridgeBuzz = Timer.periodic(const Duration(seconds: 4), (_) {
       if (_fridgeAlarm && !_fridgeMuted) unawaited(HakSound.buzz());
     });
     _fridgeWatch = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (mounted) setState(() {});
-      _checkFridgeAlarm();
+      unawaited(_tickWatch());
     });
     _campSub = camp.stream.listen((_) {
       if (mounted) setState(() {});
@@ -81,10 +88,28 @@ class _DashPageState extends State<DashPage> {
     await EnergyDay.load();
     await vm.ble.loadSaved();
     await fridge.loadSaved();
+    await juntek.loadSaved();
+    _fridgeBooted = true;
     unawaited(vm.ble.connect(vm.ble.savedId ?? packMac).catchError((_) {}));
     if (fridge.savedId != null) {
       unawaited(fridge.connectId(fridge.savedId!).catchError((_) {}));
     }
+    if (juntek.savedId != null) {
+      unawaited(juntek.connectId(juntek.savedId!).catchError((_) {}));
+    }
+  }
+
+  Future<void> _tickWatch() async {
+    final nativeMuted = await HakSound.fridgeMuted();
+    if (!mounted) return;
+    if (nativeMuted && !_fridgeMuted) _fridgeMuted = true;
+    _checkFridgeAlarm();
+    if (mounted) setState(() {});
+  }
+
+  bool get _fridgeLive {
+    final last = fridge.lastRx;
+    return fridge.live.status == 'live' && last != null && DateTime.now().difference(last) < const Duration(seconds: 20);
   }
 
   void _clearFridgeAlarm() {
@@ -106,18 +131,26 @@ class _DashPageState extends State<DashPage> {
     if (mounted) setState(() {});
   }
 
+  void _muteFridgeUntilReconnect() {
+    if (_fridgeMuted) return;
+    _fridgeMuted = true;
+    unawaited(HakSound.muteFridge(true));
+    if (mounted) setState(() {});
+  }
+
   void _checkFridgeAlarm() {
+    if (!_fridgeBooted) return;
     if (!fridge.wantsLink) {
+      _clearFridgeAlarm();
+      return;
+    }
+    if (_fridgeLive) {
       _clearFridgeAlarm();
       return;
     }
     final last = fridge.lastRx;
     final unseen = DateTime.now().difference(last ?? _started);
-    if (last != null && unseen < const Duration(minutes: 5)) {
-      _clearFridgeAlarm();
-      return;
-    }
-    if (unseen >= const Duration(minutes: 5)) _armFridgeAlarm();
+    if (unseen >= const Duration(minutes: 10)) _armFridgeAlarm();
   }
 
   void _onFridgeTemp(FridgeLive live) {
@@ -140,6 +173,7 @@ class _DashPageState extends State<DashPage> {
   void dispose() {
     _bleSub?.cancel();
     _fridgeSub?.cancel();
+    _juntekSub?.cancel();
     _campSub?.cancel();
     _fridgeBuzz?.cancel();
     _fridgeWatch?.cancel();
@@ -164,42 +198,7 @@ class _DashPageState extends State<DashPage> {
             Positioned.fill(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(10, 8, 44, 8),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                  Expanded(
-                    child: BaseDeviceHome(
-                      live: vm.ble.live,
-                      online: vm.ble.readingsLive,
-                      timeLabel: vm.timeLabel(),
-                      lightLabel: EnergyDay.hoursLeft(vm.ble.live.remainWh, vm.ble.live.acOut, vm.ble.live.dcOut),
-                      heard: heardAgo(vm.ble.lastRx),
-                      source: EnergyDay.source(vm.ble.live.acIn, vm.ble.live.pvIn),
-                      today: '${EnergyDay.inWh.toStringAsFixed(0)} in · ${EnergyDay.outWh.toStringAsFixed(0)} out',
-                      onSoc: () => _openChart('SOC', '%', 'soc'),
-                      onPvIn: () => _openChart('PV / CAR IN', 'W', 'pvIn'),
-                      onAcIn: () => _openChart('AC IN', 'W', 'acIn'),
-                      onDcOut: () => _openChart('DC OUT', 'W', 'dcOut'),
-                      onAcOut: () => _openChart('AC OUT', 'W', 'acOut'),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: BrassMonkeyFace(
-                      live: fridge.live,
-                      heard: heardAgo(fridge.lastRx),
-                      setLeft: fridge.wantLeft ?? fridge.live.leftTarget,
-                      setRight: fridge.wantRight ?? fridge.live.rightTarget,
-                      updatingLeft: fridge.leftBusy,
-                      updatingRight: fridge.rightBusy,
-                      onLeft: () => _openChart('TEMP LEFT', '°', 'fridgeL'),
-                      onRight: () => _openChart('TEMP RIGHT', '°', 'fridgeR'),
-                      onNudgeLeft: (d) => unawaited(fridge.nudgeLeft(d).catchError((_) {})),
-                      onNudgeRight: (d) => unawaited(fridge.nudgeRight(d).catchError((_) {})),
-                    ),
-                  ),
-                ],
-              ),
+                child: _faces(),
               ),
             ),
             if (_fridgeAlarm)
@@ -209,10 +208,7 @@ class _DashPageState extends State<DashPage> {
                 right: 48,
                 child: Center(
                   child: GestureDetector(
-                    onTap: () {
-                      setState(() => _fridgeMuted = !_fridgeMuted);
-                      unawaited(HakSound.muteFridge(_fridgeMuted));
-                    },
+                    onTap: _muteFridgeUntilReconnect,
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
@@ -229,7 +225,7 @@ class _DashPageState extends State<DashPage> {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            _fridgeMuted ? 'FRIDGE OFFLINE — MUTED' : 'FRIDGE OFFLINE — TAP TO MUTE',
+                            _fridgeMuted ? 'FRIDGE OFFLINE — MUTED UNTIL RECONNECT' : 'FRIDGE OFFLINE — TAP TO MUTE',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 12,
@@ -270,6 +266,76 @@ class _DashPageState extends State<DashPage> {
         0, 0, 0, 1, 0,
       ]),
       child: dash,
+    );
+  }
+
+  bool get _showJuntek => juntek.savedId != null || juntek.live.status == 'live' || juntek.live.status == 'connecting';
+
+  Widget _faces() {
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
+    final panes = <Widget>[
+      _pane(
+        BaseDeviceHome(
+          live: vm.ble.live,
+          online: vm.ble.readingsLive,
+          timeLabel: vm.timeLabel(),
+          lightLabel: EnergyDay.hoursLeft(vm.ble.live.remainWh, vm.ble.live.acOut, vm.ble.live.dcOut),
+          heard: heardAgo(vm.ble.lastRx),
+          source: EnergyDay.source(vm.ble.live.acIn, vm.ble.live.pvIn),
+          today: '${EnergyDay.inWh.toStringAsFixed(0)} in · ${EnergyDay.outWh.toStringAsFixed(0)} out',
+          onSoc: () => _openChart('SOC', '%', 'soc'),
+          onPvIn: () => _openChart('PV / CAR IN', 'W', 'pvIn'),
+          onAcIn: () => _openChart('AC IN', 'W', 'acIn'),
+          onDcOut: () => _openChart('DC OUT', 'W', 'dcOut'),
+          onAcOut: () => _openChart('AC OUT', 'W', 'acOut'),
+        ),
+        portrait,
+      ),
+      _pane(
+        BrassMonkeyFace(
+          live: fridge.live,
+          heard: heardAgo(fridge.lastRx),
+          setLeft: fridge.wantLeft ?? fridge.live.leftTarget,
+          setRight: fridge.wantRight ?? fridge.live.rightTarget,
+          updatingLeft: fridge.leftBusy,
+          updatingRight: fridge.rightBusy,
+          onLeft: () => _openChart('TEMP LEFT', '°', 'fridgeL'),
+          onRight: () => _openChart('TEMP RIGHT', '°', 'fridgeR'),
+          onNudgeLeft: (d) => unawaited(fridge.nudgeLeft(d).catchError((_) {})),
+          onNudgeRight: (d) => unawaited(fridge.nudgeRight(d).catchError((_) {})),
+        ),
+        portrait,
+      ),
+      if (_showJuntek)
+        _pane(
+          JuntekFace(live: juntek.live, heard: heardAgo(juntek.lastRx)),
+          portrait,
+        ),
+    ];
+    return Flex(
+      direction: portrait ? Axis.vertical : Axis.horizontal,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < panes.length; i++) ...[
+          if (i > 0) SizedBox(width: portrait ? 0 : 10, height: portrait ? 10 : 0),
+          panes[i],
+        ],
+      ],
+    );
+  }
+
+  Widget _pane(Widget face, bool portrait) {
+    return Expanded(
+      child: portrait
+          ? LayoutBuilder(
+              builder: (context, c) {
+                return RotatedBox(
+                  quarterTurns: 1,
+                  child: SizedBox(width: c.maxHeight, height: c.maxWidth, child: face),
+                );
+              },
+            )
+          : face,
     );
   }
 }
