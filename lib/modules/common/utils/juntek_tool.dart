@@ -1,32 +1,74 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'ble_tool.dart';
+import 'fridge_tool.dart';
 
 class JuntekHit {
-  JuntekHit({required this.id, required this.name, required this.rssi, required this.likely});
+  JuntekHit({
+    required this.id,
+    required this.name,
+    required this.rssi,
+    required this.likely,
+    this.tag = '',
+  });
   final String id;
   final String name;
   final int rssi;
   final bool likely;
+  final String tag;
 }
 
 bool likelyJuntekName(String name) {
-  final n = name.toUpperCase();
+  final n = name.toUpperCase().trim();
   if (n.isEmpty) return false;
   return n.contains('JUNTEK') ||
       n.contains('JUNCTEK') ||
       n.contains('VAT') ||
       n.contains('KG-') ||
       n.contains('KL-') ||
+      n.contains('KH-') ||
+      n.contains('KF-') ||
       n.contains('KGF') ||
       n.contains('KLF') ||
+      n.contains('KHF') ||
       n.startsWith('KG') ||
       n.startsWith('KL') ||
-      n.contains('BTGEAR');
+      n.startsWith('KH') ||
+      n.contains('BTGEAR') ||
+      n.contains('BTG');
+}
+
+bool _juntekUuids(Iterable<Guid> uuids) {
+  return uuids.any((u) {
+    final s = u.str128.toLowerCase();
+    return s.contains('fff0') || s.contains('ffe0');
+  });
+}
+
+bool _uartName(String name) {
+  final n = name.toUpperCase();
+  return n.contains('JDY') ||
+      n.contains('HM-') ||
+      n.contains('HMSOFT') ||
+      n.contains('BT05') ||
+      n.contains('BT-05') ||
+      n.contains('AT-09') ||
+      n.startsWith('MLT') ||
+      n.contains('SH-HC') ||
+      n.contains('BLE-');
+}
+
+bool _isPackOrFridge(String id, String name) {
+  if (id == BleTool.instance.savedId) return true;
+  if (id == FridgeTool.instance.savedId) return true;
+  if (likelyPackName(name, id)) return true;
+  if (likelyFridgeName(name)) return true;
+  return false;
 }
 
 class JuntekLive {
@@ -93,9 +135,14 @@ int _bcd(List<int> bytes) {
 }
 
 Map<int, int> parseJuntekFrame(Uint8List f) {
+  if (f.length < 4 || f.first != 0xbb || f.last != 0xee) return {};
+  final withCs = _parseBody(f.sublist(1, f.length - 2));
+  if (withCs.isNotEmpty) return withCs;
+  return _parseBody(f.sublist(1, f.length - 1));
+}
+
+Map<int, int> _parseBody(List<int> body) {
   final out = <int, int>{};
-  if (f.length < 5 || f.first != 0xbb || f.last != 0xee) return out;
-  final body = f.sublist(1, f.length - 2);
   var i = 0;
   while (i < body.length) {
     var j = i;
@@ -109,14 +156,45 @@ Map<int, int> parseJuntekFrame(Uint8List f) {
   return out;
 }
 
+JuntekLive? parseJuntekAscii(String raw) {
+  final m = RegExp(r':r50=\s*([0-9,\s]+)', caseSensitive: false).firstMatch(raw);
+  if (m == null) return null;
+  final parts = m.group(1)!.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+  if (parts.length < 5) return null;
+  final nums = parts.map(int.tryParse).toList();
+  if (nums.any((n) => n == null)) return null;
+  final v = nums[2]!;
+  final a = nums[3]!;
+  final ah = nums[4]!;
+  bool? charging;
+  if (nums.length > 11) charging = nums[11] == 1;
+  return JuntekLive(
+    status: 'live',
+    volts: v / 100,
+    amps: a / 100,
+    watts: (v / 100) * (a / 100),
+    ahRemain: ah / 1000,
+    charging: charging,
+  );
+}
+
+double? parseJuntekR51Cap(String raw) {
+  final m = RegExp(r':r51=\s*([0-9,\s]+)', caseSensitive: false).firstMatch(raw);
+  if (m == null) return null;
+  final parts = m.group(1)!.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+  if (parts.length < 11) return null;
+  final n = int.tryParse(parts[10]);
+  if (n == null || n <= 0) return null;
+  return n / 10;
+}
+
 class JuntekTool {
   JuntekTool._();
   static final instance = JuntekTool._();
 
   BluetoothDevice? _dev;
-  BluetoothCharacteristic? _tx;
-  BluetoothCharacteristic? _rx;
-  StreamSubscription<List<int>>? _notify;
+  final _txs = <BluetoothCharacteristic>[];
+  final _notifies = <StreamSubscription<List<int>>>[];
   StreamSubscription<BluetoothConnectionState>? _conn;
   StreamSubscription<List<ScanResult>>? _scanSub;
   Timer? _poll;
@@ -124,18 +202,23 @@ class JuntekTool {
   bool _busy = false;
   bool _manual = false;
   String? savedId;
+  double? _capAh;
   bool get wantsLink => !_manual && savedId != null;
   Uint8List _buf = Uint8List(0);
   JuntekLive live = JuntekLive();
   DateTime? lastRx;
   final _seen = <String, BluetoothDevice>{};
   final hits = <String, JuntekHit>{};
+  int _scanGen = 0;
   final _ctrl = StreamController<JuntekLive>.broadcast();
   final _hitsCtrl = StreamController<List<JuntekHit>>.broadcast();
   Stream<JuntekLive> get stream => _ctrl.stream;
   Stream<List<JuntekHit>> get hitsStream => _hitsCtrl.stream;
 
   void _emit(JuntekLive next) {
+    if (_capAh != null && next.capacityAh == null) {
+      next = next.copyWith(capacityAh: _capAh);
+    }
     live = next;
     _ctrl.add(next);
   }
@@ -150,8 +233,20 @@ class JuntekTool {
   }
 
   Future<void> loadSaved() async {
-    savedId = (await SharedPreferences.getInstance()).getString('hak-juntek-id');
+    final p = await SharedPreferences.getInstance();
+    savedId = p.getString('hak-juntek-id');
+    await p.remove('hak-juntek-cap');
+    _capAh = p.getDouble('hak-juntek-ah');
   }
+
+  Future<void> _saveCap(double ah) async {
+    if (ah <= 0) return;
+    _capAh = ah;
+    await (await SharedPreferences.getInstance()).setDouble('hak-juntek-ah', ah);
+    _emit(live.copyWith(capacityAh: ah));
+  }
+
+  Future<void> setCapacityAh(double ah) => _saveCap(ah);
 
   Future<void> _remember(String id) async {
     savedId = id;
@@ -159,6 +254,7 @@ class JuntekTool {
   }
 
   Future<void> startScan() async {
+    _scanGen++;
     hits.clear();
     _seen.clear();
     _emitHits();
@@ -166,17 +262,60 @@ class JuntekTool {
     await _scanSub?.cancel();
     _scanSub = FlutterBluePlus.scanResults.listen((list) {
       for (final r in list) {
-        final name = r.device.platformName;
-        final id = r.device.remoteId.str;
-        _seen[id] = r.device;
-        hits[id] = JuntekHit(id: id, name: name.isEmpty ? id : name, rssi: r.rssi, likely: likelyJuntekName(name));
+        _ingest(r);
       }
       _emitHits();
     });
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
+    await FlutterBluePlus.startScan(
+      timeout: const Duration(seconds: 12),
+      androidScanMode: AndroidScanMode.lowLatency,
+    );
+  }
+
+  String _nameOf(ScanResult r) {
+    final a = r.device.platformName.trim();
+    if (a.isNotEmpty) return a;
+    final b = r.advertisementData.advName.trim();
+    if (b.isNotEmpty) return b;
+    return r.device.remoteId.str;
+  }
+
+  bool _msdLooksJuntek(Map<int, List<int>> msd) {
+    for (final bytes in msd.values) {
+      final s = String.fromCharCodes(bytes.where((b) => b >= 32 && b < 127));
+      if (likelyJuntekName(s)) return true;
+    }
+    return false;
+  }
+
+  void _ingest(ScanResult r) {
+    final id = r.device.remoteId.str;
+    final name = _nameOf(r);
+    if (_isPackOrFridge(id, name)) return;
+    _seen[id] = r.device;
+    final byName = likelyJuntekName(name);
+    final byUuid = _juntekUuids(r.advertisementData.serviceUuids) || _juntekUuids(r.advertisementData.serviceData.keys);
+    final byMsd = _msdLooksJuntek(r.advertisementData.manufacturerData);
+    final likely = byName || byUuid || byMsd;
+    final tag = byUuid
+        ? 'Juntek fff0'
+        : byMsd
+            ? 'Juntek advert'
+            : byName
+                ? 'Juntek name'
+                : (_uartName(name) ? 'possible meter' : '');
+    final prev = hits[id];
+    hits[id] = JuntekHit(
+      id: id,
+      name: name,
+      rssi: r.rssi,
+      likely: likely || (prev?.likely ?? false),
+      tag: (prev != null && prev.likely && prev.tag.startsWith('Juntek GATT')) ? prev.tag : tag,
+    );
   }
 
   Future<void> stopScan() async {
+    _scanGen++;
     await FlutterBluePlus.stopScan();
     await _scanSub?.cancel();
     _scanSub = null;
@@ -191,8 +330,6 @@ class JuntekTool {
     });
   }
 
-  bool _uuidHas(Guid u, String needle) => u.str128.toLowerCase().contains(needle);
-
   Future<void> connectId(String id) async {
     _manual = false;
     _resume?.cancel();
@@ -201,6 +338,8 @@ class JuntekTool {
     _busy = true;
     lastRx = null;
     await stopScan();
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    BleRadio.instance.hush(const Duration(seconds: 15));
     final hit = _seen[id] ?? BluetoothDevice.fromId(id);
     _dev = hit;
     _emit(JuntekLive(status: 'connecting'));
@@ -215,40 +354,65 @@ class JuntekTool {
       }
     });
     try {
-      if (!hit.isConnected) {
-        await hit.connect(timeout: const Duration(seconds: 18), autoConnect: false);
-      }
-      final svcs = await hit.discoverServices();
-      _tx = null;
-      _rx = null;
-      for (final s in svcs) {
-        if (!_uuidHas(s.uuid, 'fff0') && !_uuidHas(s.uuid, 'ffe0') && !_uuidHas(s.uuid, 'ff00')) continue;
-        for (final c in s.characteristics) {
-          final u = c.uuid.str128.toLowerCase();
-          if (u.contains('fff1') || u.contains('ffe1')) _rx = c;
-          if (u.contains('fff2') || u.contains('ffe2')) _tx = c;
+      Object? err;
+      for (var i = 0; i < 2; i++) {
+        try {
+          if (i > 0) {
+            try {
+              await hit.disconnect();
+            } catch (_) {}
+            await Future<void>.delayed(Duration(milliseconds: 900 * i));
+          }
+          if (!hit.isConnected) {
+            await hit.connect(timeout: const Duration(seconds: 20), autoConnect: false, mtu: null);
+          }
+          err = null;
+          break;
+        } catch (e) {
+          err = e;
         }
       }
-      if (_rx == null) {
-        for (final s in svcs) {
-          for (final c in s.characteristics) {
-            if (c.properties.notify) _rx = c;
-            if (c.properties.write || c.properties.writeWithoutResponse) _tx ??= c;
+      if (err != null) {
+        _emit(JuntekLive(status: 'fail', error: err.toString()));
+        throw err;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      var svcs = <BluetoothService>[];
+      try {
+        svcs = await hit.discoverServices().timeout(const Duration(seconds: 8));
+      } catch (_) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        svcs = await hit.discoverServices().timeout(const Duration(seconds: 8));
+      }
+      _txs.clear();
+      await _cancelNotifies();
+      for (final s in svcs) {
+        for (final c in s.characteristics) {
+          if (c.properties.write || c.properties.writeWithoutResponse) {
+            final u = c.uuid.str128.toLowerCase();
+            if (u.contains('ffe') || u.contains('fff')) _txs.add(c);
+          }
+          if (c.properties.notify || c.properties.indicate) {
+            try {
+              await c.setNotifyValue(true);
+              _notifies.add(c.onValueReceived.listen(_onRx));
+            } catch (_) {}
           }
         }
       }
-      final rx = _rx;
-      if (rx == null) {
-        _emit(JuntekLive(status: 'no gatt', error: 'no notify char'));
+      if (_notifies.isEmpty) {
+        final ids = svcs.map((s) => s.uuid.str128).join(',');
+        _emit(JuntekLive(status: 'no gatt', error: 'no notify ($ids)'));
         throw Exception('Juntek GATT missing notify');
       }
-      if (_tx == null && (rx.properties.write || rx.properties.writeWithoutResponse)) _tx = rx;
-      await rx.setNotifyValue(true);
-      await _notify?.cancel();
-      _notify = rx.onValueReceived.listen(_onRx);
-      await _dump();
       _poll?.cancel();
-      _poll = Timer.periodic(const Duration(seconds: 4), (_) => unawaited(_dump()));
+      _poll = Timer.periodic(const Duration(seconds: 3), (_) {
+        if (lastRx == null || DateTime.now().difference(lastRx!) > const Duration(seconds: 5)) {
+          unawaited(_dump());
+        }
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      await _dump();
     } catch (e) {
       _scheduleResume();
       rethrow;
@@ -257,17 +421,30 @@ class JuntekTool {
     }
   }
 
+  Future<void> _cancelNotifies() async {
+    for (final s in _notifies) {
+      await s.cancel();
+    }
+    _notifies.clear();
+  }
+
   Future<void> _dump() async {
-    final tx = _tx;
-    if (tx == null) return;
-    try {
-      await BleRadio.instance.enqueue(() async {
-        await tx.write(
-          [0xbb, 0x9a, 0xa9, 0x0c, 0xee],
-          withoutResponse: tx.properties.writeWithoutResponse,
-        );
-      });
-    } catch (_) {}
+    final chars = [..._txs];
+    for (final tx in chars) {
+      try {
+        await BleRadio.instance.enqueue(() async {
+          final noRsp = tx.properties.writeWithoutResponse;
+          await tx.write(utf8.encode(':R50=1,2,1,'), withoutResponse: noRsp).timeout(const Duration(seconds: 2));
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          await tx.write(utf8.encode(':R51=1,2,1,'), withoutResponse: noRsp).timeout(const Duration(seconds: 2));
+          await Future<void>.delayed(const Duration(milliseconds: 80));
+          await tx.write(
+            [0xbb, 0x9a, 0xa9, 0x0c, 0xee],
+            withoutResponse: noRsp,
+          ).timeout(const Duration(seconds: 2));
+        });
+      } catch (_) {}
+    }
   }
 
   Future<void> disconnect() async {
@@ -275,12 +452,11 @@ class JuntekTool {
     _resume?.cancel();
     _poll?.cancel();
     await stopScan();
-    await _notify?.cancel();
+    await _cancelNotifies();
     await _conn?.cancel();
     await _dev?.disconnect();
     _dev = null;
-    _tx = null;
-    _rx = null;
+    _txs.clear();
     lastRx = null;
     savedId = null;
     final p = await SharedPreferences.getInstance();
@@ -289,6 +465,7 @@ class JuntekTool {
   }
 
   void _onRx(List<int> data) {
+    if (data.isEmpty) return;
     lastRx = DateTime.now();
     final n = Uint8List.fromList([..._buf, ...data]);
     final frames = <Uint8List>[];
@@ -308,17 +485,45 @@ class JuntekTool {
     }
     _buf = i < n.length ? n.sublist(i) : Uint8List(0);
     if (_buf.length > 256) _buf = _buf.sublist(_buf.length - 64);
-    var next = live.copyWith(status: 'live', error: null);
+    var next = live;
+    var got = false;
     for (final f in frames) {
       final map = parseJuntekFrame(f);
+      if (map.isEmpty) continue;
+      got = true;
       if (map.containsKey(0xc0)) next = next.copyWith(volts: map[0xc0]! / 100);
       if (map.containsKey(0xc1)) next = next.copyWith(amps: map[0xc1]! / 100);
       if (map.containsKey(0xd8)) next = next.copyWith(watts: map[0xd8]! / 100);
       if (map.containsKey(0xd2)) next = next.copyWith(ahRemain: map[0xd2]! / 1000);
-      if (map.containsKey(0xb1)) next = next.copyWith(capacityAh: map[0xb1]!.toDouble());
+      if (map.containsKey(0xb0)) {
+        final cap = map[0xb0]! / 10;
+        if (cap > 1) {
+          next = next.copyWith(capacityAh: cap);
+          unawaited(_saveCap(cap));
+        }
+      }
       if (map.containsKey(0xd6)) next = next.copyWith(minutesLeft: map[0xd6]);
       if (map.containsKey(0xd1)) next = next.copyWith(charging: map[0xd1] == 1);
     }
-    _emit(next);
+    final text = utf8.decode(data, allowMalformed: true);
+    final ascii = parseJuntekAscii(text);
+    if (ascii != null) {
+      got = true;
+      next = next.copyWith(
+        volts: ascii.volts,
+        amps: ascii.amps,
+        watts: ascii.watts,
+        ahRemain: ascii.ahRemain,
+        charging: ascii.charging,
+      );
+    }
+    final r51 = parseJuntekR51Cap(text);
+    if (r51 != null) {
+      got = true;
+      next = next.copyWith(capacityAh: r51);
+      unawaited(_saveCap(r51));
+    }
+    if (!got) return;
+    _emit(next.copyWith(status: 'live', error: null));
   }
 }

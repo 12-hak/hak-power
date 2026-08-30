@@ -11,8 +11,11 @@ import '../modules/common/utils/pack_history.dart';
 import 'ColorScreenPower/outdoor_module/view_models/outdoor_power_view_model.dart';
 import 'Widget/base_device_home.dart';
 import 'Widget/brass_monkey_face.dart';
+import 'Widget/device_detail.dart';
+import 'Widget/fridge_tile.dart';
 import 'Widget/juntek_face.dart';
 import 'Widget/power_chart.dart';
+import 'Widget/soc_tile.dart';
 import 'settings_page.dart';
 
 class DashPage extends StatefulWidget {
@@ -204,37 +207,38 @@ class _DashPageState extends State<DashPage> {
             if (_fridgeAlarm)
               Positioned(
                 top: 8,
-                left: 0,
-                right: 48,
-                child: Center(
-                  child: GestureDetector(
-                    onTap: _muteFridgeUntilReconnect,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: _fridgeMuted ? const Color(0xFF2A3034) : const Color(0xE6C62828),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _fridgeMuted ? Icons.volume_off : Icons.volume_up,
-                            size: 18,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            _fridgeMuted ? 'FRIDGE OFFLINE — MUTED UNTIL RECONNECT' : 'FRIDGE OFFLINE — TAP TO MUTE',
+                left: 8,
+                right: 52,
+                child: GestureDetector(
+                  onTap: _muteFridgeUntilReconnect,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: _fridgeMuted ? const Color(0xFF2A3034) : const Color(0xE6C62828),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _fridgeMuted ? Icons.volume_off : Icons.volume_up,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _fridgeMuted ? 'FRIDGE MUTED UNTIL RECONNECT' : 'FRIDGE OFFLINE — TAP TO MUTE',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
-                              letterSpacing: 0.6,
+                              letterSpacing: 0.4,
                             ),
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -269,73 +273,139 @@ class _DashPageState extends State<DashPage> {
     );
   }
 
-  bool get _showJuntek => juntek.savedId != null || juntek.live.status == 'live' || juntek.live.status == 'connecting';
+  Future<void> _openPack() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DeviceDetailPage(
+          title: 'VoltX',
+          child: StreamBuilder(
+            stream: vm.ble.stream,
+            initialData: vm.ble.live,
+            builder: (_, __) => BaseDeviceHome(
+              live: vm.ble.live,
+              online: vm.ble.readingsLive,
+              timeLabel: vm.timeLabel(),
+              lightLabel: EnergyDay.hoursLeft(vm.ble.live.remainWh, vm.ble.live.acOut, vm.ble.live.dcOut),
+              heard: heardAgo(vm.ble.lastRx),
+              source: EnergyDay.source(vm.ble.live.acIn, vm.ble.live.pvIn),
+              today: '${EnergyDay.inWh.toStringAsFixed(0)} in · ${EnergyDay.outWh.toStringAsFixed(0)} out',
+              onSoc: () => _openChart('SOC', '%', 'soc'),
+              onPvIn: () => _openChart('PV / CAR IN', 'W', 'pvIn'),
+              onAcIn: () => _openChart('AC IN', 'W', 'acIn'),
+              onDcOut: () => _openChart('DC OUT', 'W', 'dcOut'),
+              onAcOut: () => _openChart('AC OUT', 'W', 'acOut'),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openFridge() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DeviceDetailPage(
+          title: 'Brass Monkey',
+          child: StreamBuilder(
+            stream: fridge.stream,
+            initialData: fridge.live,
+            builder: (_, __) => BrassMonkeyFace(
+              live: fridge.live,
+              heard: heardAgo(fridge.lastRx),
+              setLeft: fridge.wantLeft ?? fridge.live.leftTarget,
+              setRight: fridge.wantRight ?? fridge.live.rightTarget,
+              updatingLeft: fridge.leftBusy,
+              updatingRight: fridge.rightBusy,
+              onLeft: () => _openChart('TEMP LEFT', '°', 'fridgeL'),
+              onRight: () => _openChart('TEMP RIGHT', '°', 'fridgeR'),
+              onNudgeLeft: (d) => unawaited(fridge.nudgeLeft(d).catchError((_) {})),
+              onNudgeRight: (d) => unawaited(fridge.nudgeRight(d).catchError((_) {})),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openJuntek() async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => DeviceDetailPage(
+          title: 'Juntek',
+          child: StreamBuilder(
+            stream: juntek.stream,
+            initialData: juntek.live,
+            builder: (_, __) => JuntekFace(live: juntek.live, heard: heardAgo(juntek.lastRx)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool get _packOn => vm.ble.readingsLive || vm.ble.live.status == 'live';
+  bool get _fridgeOn => fridge.live.status == 'live';
+  bool get _juntekOn => juntek.live.status == 'live';
+
+  double? _packWatts(PackLive live) {
+    return (live.inputW - live.outputW).toDouble();
+  }
+
+  double? _juntekWatts(JuntekLive live) {
+    final w = live.watts;
+    if (w == null) return null;
+    if (live.charging == false) return -w.abs();
+    if (live.charging == true) return w.abs();
+    return w;
+  }
 
   Widget _faces() {
     final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
-    final panes = <Widget>[
-      _pane(
-        BaseDeviceHome(
-          live: vm.ble.live,
+    final tiles = <Widget>[
+      if (_packOn)
+        SocTile(
+          label: 'VOLTX',
+          soc: vm.ble.live.soc,
           online: vm.ble.readingsLive,
-          timeLabel: vm.timeLabel(),
-          lightLabel: EnergyDay.hoursLeft(vm.ble.live.remainWh, vm.ble.live.acOut, vm.ble.live.dcOut),
-          heard: heardAgo(vm.ble.lastRx),
-          source: EnergyDay.source(vm.ble.live.acIn, vm.ble.live.pvIn),
-          today: '${EnergyDay.inWh.toStringAsFixed(0)} in · ${EnergyDay.outWh.toStringAsFixed(0)} out',
-          onSoc: () => _openChart('SOC', '%', 'soc'),
-          onPvIn: () => _openChart('PV / CAR IN', 'W', 'pvIn'),
-          onAcIn: () => _openChart('AC IN', 'W', 'acIn'),
-          onDcOut: () => _openChart('DC OUT', 'W', 'dcOut'),
-          onAcOut: () => _openChart('AC OUT', 'W', 'acOut'),
+          watts: _packWatts(vm.ble.live),
+          subtitle: vm.ble.live.remainWh != null ? '${vm.ble.live.remainWh} Wh' : null,
+          onTap: () => unawaited(_openPack()),
         ),
-        portrait,
-      ),
-      _pane(
-        BrassMonkeyFace(
-          live: fridge.live,
-          heard: heardAgo(fridge.lastRx),
-          setLeft: fridge.wantLeft ?? fridge.live.leftTarget,
-          setRight: fridge.wantRight ?? fridge.live.rightTarget,
-          updatingLeft: fridge.leftBusy,
-          updatingRight: fridge.rightBusy,
-          onLeft: () => _openChart('TEMP LEFT', '°', 'fridgeL'),
-          onRight: () => _openChart('TEMP RIGHT', '°', 'fridgeR'),
-          onNudgeLeft: (d) => unawaited(fridge.nudgeLeft(d).catchError((_) {})),
-          onNudgeRight: (d) => unawaited(fridge.nudgeRight(d).catchError((_) {})),
+      if (_fridgeOn)
+        FridgeTile(
+          leftC: fridge.live.leftC,
+          rightC: fridge.live.rightC,
+          unit: fridge.live.unit,
+          onTap: () => unawaited(_openFridge()),
         ),
-        portrait,
-      ),
-      if (_showJuntek)
-        _pane(
-          JuntekFace(live: juntek.live, heard: heardAgo(juntek.lastRx)),
-          portrait,
+      if (_juntekOn)
+        SocTile(
+          label: 'JUNTEK',
+          soc: juntek.live.soc,
+          watts: _juntekWatts(juntek.live),
+          subtitle: juntek.live.ahRemain != null ? '${juntek.live.ahRemain!.toStringAsFixed(1)} Ah' : null,
+          onTap: () => unawaited(_openJuntek()),
         ),
     ];
+    if (tiles.isEmpty) {
+      return const Center(
+        child: Text(
+          'Connect pack, fridge or Juntek in Settings',
+          style: TextStyle(color: Color(0xFF6A8088), fontSize: 13),
+        ),
+      );
+    }
     return Flex(
       direction: portrait ? Axis.vertical : Axis.horizontal,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < panes.length; i++) ...[
+        for (var i = 0; i < tiles.length; i++) ...[
           if (i > 0) SizedBox(width: portrait ? 0 : 10, height: portrait ? 10 : 0),
-          panes[i],
+          Expanded(child: tiles[i]),
         ],
       ],
-    );
-  }
-
-  Widget _pane(Widget face, bool portrait) {
-    return Expanded(
-      child: portrait
-          ? LayoutBuilder(
-              builder: (context, c) {
-                return RotatedBox(
-                  quarterTurns: 1,
-                  child: SizedBox(width: c.maxHeight, height: c.maxWidth, child: face),
-                );
-              },
-            )
-          : face,
     );
   }
 }

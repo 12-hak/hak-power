@@ -199,6 +199,47 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          StreamBuilder(
+            stream: JuntekTool.instance.stream,
+            initialData: JuntekTool.instance.live,
+            builder: (context, _) {
+              final ah = JuntekTool.instance.live.capacityAh;
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Juntek battery Ah'),
+                subtitle: Text(
+                  ah != null ? '${ah.toStringAsFixed(1)} Ah (same as meter preset)' : 'Set to match the meter’s battery size',
+                ),
+                trailing: const Icon(Icons.edit, size: 18),
+                onTap: busy
+                    ? null
+                    : () async {
+                        final ctrl = TextEditingController(text: ah?.toStringAsFixed(0) ?? '');
+                        final ok = await showDialog<double>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('Juntek battery Ah'),
+                            content: TextField(
+                              controller: ctrl,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: const InputDecoration(hintText: 'e.g. 100'),
+                            ),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, double.tryParse(ctrl.text.trim())),
+                                child: const Text('Save'),
+                              ),
+                            ],
+                          ),
+                        );
+                        ctrl.dispose();
+                        if (ok != null && ok > 0) await _run(() => JuntekTool.instance.setCapacityAh(ok));
+                      },
+              );
+            },
+          ),
           const SizedBox(height: 28),
           const Text('About', style: TextStyle(color: Color(0xFF8B9198))),
           const ListTile(
