@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Hak Power</string>
+    <string name="widget_open_app">Open Hak Power</string>
+    <string name="widget_voltx">VoltX charge and watts</string>
+    <string name="widget_fridge">Brass Monkey temperatures</string>
+    <string name="widget_juntek">Juntek charge and watts</string>
+    <string name="widget_dash">Hak Power full dash</string>
 </resources>

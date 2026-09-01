@@ -6,6 +6,7 @@ import '../modules/common/utils/ble_tool.dart';
 import '../modules/common/utils/fridge_protocol.dart';
 import '../modules/common/utils/fridge_tool.dart';
 import '../modules/common/utils/hak_sound.dart';
+import '../modules/common/utils/home_widgets.dart';
 import '../modules/common/utils/juntek_tool.dart';
 import '../modules/common/utils/pack_history.dart';
 import 'ColorScreenPower/outdoor_module/view_models/outdoor_power_view_model.dart';
@@ -61,6 +62,7 @@ class _DashPageState extends State<DashPage> {
         if (ble.soc! > 22) _socLowBeeped = false;
       }
       if (mounted) setState(() {});
+      unawaited(_pushWidgets());
     });
     _fridgeSub = fridge.stream.listen((live) {
       unawaited(PackHistory.push('fridgeL', live.leftC?.toDouble(), sparkMax: 720, sparkGapMs: 120000));
@@ -70,9 +72,11 @@ class _DashPageState extends State<DashPage> {
       _checkFridgeAlarm();
       _onFridgeTemp(live);
       if (mounted) setState(() {});
+      unawaited(_pushWidgets());
     });
     _juntekSub = juntek.stream.listen((_) {
       if (mounted) setState(() {});
+      unawaited(_pushWidgets());
     });
     _fridgeBuzz = Timer.periodic(const Duration(seconds: 4), (_) {
       if (_fridgeAlarm && !_fridgeMuted) unawaited(HakSound.buzz());
@@ -100,6 +104,18 @@ class _DashPageState extends State<DashPage> {
     if (juntek.savedId != null) {
       unawaited(juntek.connectId(juntek.savedId!).catchError((_) {}));
     }
+    unawaited(_pushWidgets());
+  }
+
+  Future<void> _pushWidgets() {
+    return HakHomeWidgets.publish(
+      pack: vm.ble.live,
+      packOn: _packOn,
+      fridge: fridge.live,
+      fridgeOn: _fridgeOn,
+      juntek: juntek.live,
+      juntekOn: _juntekOn,
+    );
   }
 
   Future<void> _tickWatch() async {

@@ -59,6 +59,50 @@
                 <action android:name="com.voltx.s2200.FRIDGE_ALARM" />
             </intent-filter>
         </receiver>
+        <receiver
+            android:name=".HakVoltxWidget"
+            android:exported="true"
+            android:label="VoltX">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hak_widget_voltx" />
+        </receiver>
+        <receiver
+            android:name=".HakFridgeWidget"
+            android:exported="true"
+            android:label="Brass Monkey">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hak_widget_fridge" />
+        </receiver>
+        <receiver
+            android:name=".HakJuntekWidget"
+            android:exported="true"
+            android:label="Juntek">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hak_widget_juntek" />
+        </receiver>
+        <receiver
+            android:name=".HakDashWidget"
+            android:exported="true"
+            android:label="Hak Power">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/hak_widget_dash" />
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

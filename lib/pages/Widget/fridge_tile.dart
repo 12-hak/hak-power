@@ -6,7 +6,7 @@ class FridgeTile extends StatelessWidget {
     required this.leftC,
     required this.rightC,
     required this.unit,
-    required this.onTap,
+    this.onTap,
     this.online = true,
   });
 
@@ -14,7 +14,7 @@ class FridgeTile extends StatelessWidget {
   final int? rightC;
   final String unit;
   final bool online;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

@@ -8,7 +8,7 @@ class SocTile extends StatelessWidget {
     super.key,
     required this.label,
     required this.soc,
-    required this.onTap,
+    this.onTap,
     this.subtitle,
     this.watts,
     this.online = true,
@@ -19,7 +19,7 @@ class SocTile extends StatelessWidget {
   final String? subtitle;
   final double? watts;
   final bool online;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

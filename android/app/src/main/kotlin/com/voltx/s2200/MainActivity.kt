@@ -78,6 +78,21 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "hak/widget")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "save") {
+                    val key = call.argument<String>("key") ?: ""
+                    val png = call.argument<ByteArray>("png")
+                    if (key.isNotEmpty() && png != null) {
+                        HakImageWidget.save(this, key, png)
+                        result.success(null)
+                    } else {
+                        result.error("bad", "missing key or png", null)
+                    }
+                } else {
+                    result.notImplemented()
+                }
+            }
     }
 
     private fun askNotify() {
