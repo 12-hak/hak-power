@@ -29,18 +29,23 @@ class HakHomeWidgets {
     _busy = true;
     _last = DateTime.now();
     try {
-      await _save('hak_voltx', const Size(320, 400), _pack(pack, packOn));
-      await _save('hak_fridge', const Size(320, 400), _fridge(fridge, fridgeOn));
-      await _save('hak_juntek', const Size(320, 400), _juntek(juntek, juntekOn));
-      await _save('hak_dash', const Size(720, 360), _dash(pack, packOn, fridge, fridgeOn, juntek, juntekOn));
+      await _save('hak_voltx', const Size(320, 400), _pack(pack, packOn), empty: !packOn);
+      await _save('hak_fridge', const Size(320, 400), _fridge(fridge, fridgeOn), empty: !fridgeOn);
+      await _save('hak_juntek', const Size(320, 400), _juntek(juntek, juntekOn), empty: !juntekOn);
+      await _save(
+        'hak_dash',
+        const Size(720, 360),
+        _dash(pack, packOn, fridge, fridgeOn, juntek, juntekOn),
+        empty: !packOn && !fridgeOn && !juntekOn,
+      );
     } catch (_) {
     } finally {
       _busy = false;
     }
   }
 
-  static Future<void> _save(String key, Size size, Widget child) async {
-    final png = await _png(_box(size, child), size);
+  static Future<void> _save(String key, Size size, Widget child, {bool empty = false}) async {
+    final png = await _png(_box(size, child, empty: empty), size);
     await _ch.invokeMethod('save', {'key': key, 'png': png});
   }
 
@@ -75,13 +80,14 @@ class HakHomeWidgets {
     return bytes!.buffer.asUint8List();
   }
 
-  static Widget _box(Size size, Widget child) {
+  static Widget _box(Size size, Widget child, {bool empty = false}) {
     return MediaQuery(
       data: MediaQueryData(size: size),
       child: Directionality(
         textDirection: TextDirection.ltr,
         child: Material(
-          color: const Color(0xFF05080A),
+          // Live widgets keep the solid panel; empty state lets wallpaper show through.
+          color: empty ? const Color(0x00000000) : const Color(0xFF05080A),
           child: SizedBox(width: size.width, height: size.height, child: child),
         ),
       ),
@@ -89,11 +95,19 @@ class HakHomeWidgets {
   }
 
   static Widget _empty(String label) {
-    return Center(
-      child: Text(
-        label,
-        textAlign: TextAlign.center,
-        style: const TextStyle(color: Color(0xFF6A8088), fontSize: 13),
+    return Container(
+      margin: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: const Color(0x00000000),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(width: 1.5, color: const Color(0x886A8088)),
+      ),
+      child: Center(
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Color(0xCCB0C4C8), fontSize: 13),
+        ),
       ),
     );
   }
